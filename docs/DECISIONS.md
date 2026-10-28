@@ -49,4 +49,27 @@ only when a decision is intentionally superseded.
     or Tailwind unless explicitly approved.
 -   **Reason:** Matches stated project preferences.
 -   **Consequences:** Keep conventions consistent and document any
-    future change.
+    future change. Superseded by ADR-0006.
+
+## ADR-0006: Frontend stack updated to Next.js and Tailwind CSS (JavaScript)
+
+-   **Status:** Accepted (Owner Directed)
+-   **Decision:** Use Next.js with JavaScript (no TypeScript) and Tailwind CSS for the frontend application.
+-   **Reason:** Explicit owner direction for rapid UI development, modern server/client components, and Tailwind styling.
+-   **Consequences:** Frontend scaffolded with Next.js (JavaScript + Tailwind CSS). TypeScript remains excluded per request.
+
+## ADR-0007: Cloud persistence with Supabase and Backblaze B2
+
+-   **Status:** Accepted (Owner Directed)
+-   **Decision:** Use Supabase (PostgreSQL) for relational candidate data and Backblaze B2 (S3-compatible) for candidate resume storage.
+-   **Reason:** Eliminates local database bloat and ensures production reliability across client laptops.
+-   **Consequences:** Backend connects to Supabase and uploads resumes to Backblaze B2 via S3 API.
+
+## ADR-0008: Live Headed Chromium Browser with Multimodal Vision OCR and Session State Tracker
+
+-   **Status:** Accepted
+-   **Decision:** Support two complementary sourcing modes: Mode A (Autonomous UI Simulation with profile traversal) and Mode B (Live Headed Chromium with Multimodal Vision OCR via Gemini). Manage browser process lifecycle via `LiveSourcingTracker` with asynchronous polling.
+-   **Reason:** Direct unauthenticated LinkedIn scraping triggers authwalls/captchas. Google X-Ray search combined with Gemini Vision OCR reliably reads candidate cards, crops avatars, highlights DOM elements, and keeps the browser window open for user visibility without premature closure.
+-   **Consequences:** Sourcing UI monitors live execution state machine (`launching_browser` -> `searching` -> `extracting` -> `persisting` -> `completed`). Avatars cropped from screen via PIL and encoded as data URIs.
+
+

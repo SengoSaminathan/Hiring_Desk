@@ -17,6 +17,7 @@ ehthumbs_vista.db
 *.njsproj
 *.sln
 *.sw?
+UI-prototype/
 
 # Environment & Secrets
 .env
@@ -33,7 +34,7 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
+/build/
 develop-eggs/
 dist/
 downloads/
