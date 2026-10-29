@@ -46,6 +46,12 @@ import {
   Sun,
   Lock,
   Database,
+  User,
+  Home as HomeIcon,
+  ArrowLeft,
+  Info,
+  Shield,
+  AlertTriangle,
 } from "lucide-react";
 
 // Inline brand SVGs for pixel-perfect social icons
@@ -448,7 +454,8 @@ export default function Home() {
   const [selectedRolePreset, setSelectedRolePreset] = useState("ai_lead");
   const [currentRole, setCurrentRole] = useState(SAMPLE_JDS.ai_lead);
   const [rawJd, setRawJd] = useState(SAMPLE_JDS.ai_lead.text);
-  const [searchMode, setSearchMode] = useState("simulation");
+  const [searchMode, setSearchMode] = useState("autonomous");
+  const [browserChannel, setBrowserChannel] = useState("chrome");
   const [maxResults, setMaxResults] = useState(6);
   const [aiSearchPrompt, setAiSearchPrompt] = useState("");
 
@@ -480,6 +487,8 @@ export default function Home() {
   const [sessionProgress, setSessionProgress] = useState(0);
   const [sessionError, setSessionError] = useState(null);
   const [isResumingSession, setIsResumingSession] = useState(false);
+  const [verificationFeedback, setVerificationFeedback] = useState(null);
+  const [isVerifyingScreen, setIsVerifyingScreen] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
   const [error, setError] = useState(null);
   const [pipelineStep, setPipelineStep] = useState(3);
@@ -715,29 +724,84 @@ export default function Home() {
     }
   };
 
-  // Resume Session after Recruiter Completes Login
-  const handleResumeSourcing = async () => {
-    if (!activeSessionId) return;
+  // Recruiter clicks Open LinkedIn in a new tab
+  const handleOpenLinkedInTab = async () => {
     try {
-      setIsResumingSession(true);
-      addTelemetryLog("Recruiter clicked 'Proceed'. Verifying LinkedIn session & resuming agent control...", "shield");
+      addTelemetryLog(`Opening LinkedIn tab in headed ${browserChannel === "msedge" ? "Edge" : browserChannel === "chrome" ? "Chrome" : "Chromium"} browser...`, "search");
+      await fetch(`${apiBase}/api/sourcing/open-linkedin-tab`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ browser_channel: browserChannel }),
+      });
+      addTelemetryLog("Switched browser tab to https://www.linkedin.com. Please complete sign-in manually.", "shield");
+    } catch (err) {
+      console.warn("Open LinkedIn tab warning:", err);
+      if (typeof window !== "undefined") {
+        window.open("https://www.linkedin.com", "_blank");
+      }
+    }
+  };
+
+  // Recruiter clicks "I've Logged In — Continue": AI Agent takes UI control and strictly verifies screen
+  const handleVerifyAndContinue = async () => {
+    if (!activeSessionId) return;
+    setIsVerifyingScreen(true);
+    setVerificationFeedback(null);
+    addTelemetryLog("AI Agent taking UI control... Inspecting browser tabs & screen to verify LinkedIn login...", "shield");
+
+    try {
+      // Use resume-session endpoint which both verifies AND signals resume on success
       const res = await fetch(`${apiBase}/api/sourcing/resume-session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session_id: activeSessionId }),
       });
       const data = await res.json();
-      addTelemetryLog(data.message || "Proceed signal sent to browser agent.", "shield");
+
+      if (!data.authenticated) {
+        // AI AGENT REJECTS PROCEEDING: Insists user sign in properly
+        const screenName = data.screen_title || "LinkedIn: Log In or Sign Up";
+        setVerificationFeedback({
+          type: "error",
+          status: data.status,
+          title: "⚠️ Login Verification Failed — AI Agent UI Inspection",
+          screenTitle: screenName,
+          message: data.message || `The AI Agent inspected your browser screen and detected that you are not logged in yet (Screen: '${screenName}'). Please complete the login in your browser before continuing.`,
+        });
+        setSessionError(data.message);
+        addTelemetryLog(`AI Agent Screen Verification: Failed (${screenName}). Insisting recruiter complete manual login.`, "file");
+      } else {
+        // AI AGENT CONFIRMS AUTHENTICATION: Takes UI control and proceeds
+        setVerificationFeedback({
+          type: "success",
+          status: "verified",
+          title: "✅ LinkedIn Login Verified!",
+          screenTitle: data.screen_title,
+          message: "AI Agent has verified your LinkedIn session! Taking control of the browser UI and proceeding with candidate sourcing...",
+        });
+        setSessionError(null);
+        addTelemetryLog(`AI Agent Screen Verification: Successfully verified LinkedIn session (${data.screen_title || "Feed"})! Resuming candidate traversal...`, "shield");
+        // No need to call resume-session separately — it's already done by the endpoint
+      }
     } catch (err) {
-      console.warn("Resume session error:", err);
+      console.error("Verification error:", err);
+      setVerificationFeedback({
+        type: "error",
+        status: "error",
+        title: "⚠️ Verification Communication Error",
+        message: `Could not verify browser screen: ${err.message}`,
+      });
     } finally {
-      setTimeout(() => setIsResumingSession(false), 1200);
+      setIsVerifyingScreen(false);
     }
   };
 
+  // Resume Session legacy alias
+  const handleResumeSourcing = handleVerifyAndContinue;
+
   // Launch Playwright Search & Gemini Scoring
   const handleLaunchSourcing = async (modeOverride) => {
-    const effectiveMode = (typeof modeOverride === "string" ? modeOverride : null) || searchMode || "simulation";
+    const effectiveMode = (typeof modeOverride === "string" ? modeOverride : null) || searchMode || "autonomous";
     setIsSourcingModalOpen(true);
     setSourcing(true);
     setError(null);
@@ -745,10 +809,11 @@ export default function Home() {
     setPipelineStep(3);
     setSessionProgress(15);
     setSessionState("launching_browser");
+    const channelName = browserChannel === "msedge" ? "Microsoft Edge" : browserChannel === "chrome" ? "Google Chrome" : "Chromium";
     setSourcingStage(
-      effectiveMode === "simulation"
-        ? "Launching headed browser simulation workspace..."
-        : "Launching headed Chromium browser directly to LinkedIn..."
+      effectiveMode === "demo"
+        ? "Launching offline simulation sandbox..."
+        : `Launching headed ${channelName} browser directly to LinkedIn...`
     );
 
     const query =
@@ -756,7 +821,13 @@ export default function Home() {
       `"${currentRole.title}" React Next.js Python FastAPI`;
 
     addTelemetryLog(
-      `Launching ${effectiveMode === "simulation" ? "Mode A (Autonomous Browser Agent Simulation)" : "Mode B (Direct Live LinkedIn Session)"} sourcing...`,
+      `Launching ${
+        effectiveMode === "demo"
+          ? "Offline Demo Simulation"
+          : effectiveMode === "autonomous"
+          ? `Mode A (Autonomous LinkedIn Sourcing in ${channelName})`
+          : `Mode B (Guided Live LinkedIn Session in ${channelName})`
+      }...`,
       "search"
     );
     addTelemetryLog(`Search query: ${query}`, "search");
@@ -770,6 +841,7 @@ export default function Home() {
           keywords: query,
           max_results: maxResults,
           mode: effectiveMode,
+          browser_channel: browserChannel,
           deep_scrape: true,
         }),
       });
@@ -946,8 +1018,9 @@ export default function Home() {
       setPipelineStep(5);
       setSessionState("completed");
       setSessionProgress(100);
-      setSourcingStage(`🎉 Done! Harvested ${extractedCandidates.length} profiles into SQLite database. Headed Chromium browser remains open.`);
+      setSourcingStage(`🎉 Done! Harvested ${extractedCandidates.length} profiles into SQLite database. Headed ${channelName} browser remains open.`);
       addTelemetryLog(`Shortlist refreshed with ${extractedCandidates.length} verified candidate profiles (stored in SQLite)!`, "shield");
+
     } catch (err) {
       setError(`Sourcing error: ${err.message}`);
       setSessionError(err.message);
@@ -1182,8 +1255,31 @@ export default function Home() {
             </form>
           </div>
 
-          {/* Right: Notification, Theme Toggle, Profile */}
+          {/* Right: Status Pill, Notification, Theme Toggle, Profile */}
           <div className="flex items-center gap-3">
+            {/* Status Pill matching Image 1 */}
+            {sessionState === "waiting_for_login" ? (
+              <div
+                onClick={() => setIsSourcingModalOpen(true)}
+                className="flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 shadow-xs cursor-pointer hover:bg-emerald-100 transition-colors animate-in fade-in"
+                title="Click to view Recruiter Safe Handover Mode"
+              >
+                <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse ring-4 ring-emerald-500/20" />
+                <div className="flex flex-col text-left leading-tight">
+                  <span className="text-[11px] font-black text-emerald-900 dark:text-emerald-200">Agent Paused</span>
+                  <span className="text-[9px] text-emerald-700 dark:text-emerald-400 font-medium">Waiting for LinkedIn Sign-in</span>
+                </div>
+              </div>
+            ) : sourcing ? (
+              <div
+                onClick={() => setIsSourcingModalOpen(true)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-indigo-800 dark:text-indigo-300 shadow-xs cursor-pointer"
+              >
+                <span className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
+                <span className="text-[11px] font-bold">AI Agent Sourcing Active</span>
+              </div>
+            ) : null}
+
             {/* Notification bell */}
             <button className="h-9 w-9 rounded-xl bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-900 transition-colors relative">
               <Bell className="h-4 w-4" />
@@ -1201,12 +1297,15 @@ export default function Home() {
 
             {/* User Profile avatar */}
             <div className="flex items-center gap-2.5 pl-2 border-l border-slate-200 dark:border-[#141b2d]">
-              <div className="h-8 w-8 rounded-full bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-xs font-bold text-white shadow-sm">
+              <div className="h-8 w-8 rounded-full bg-[#8b5cf6] flex items-center justify-center text-xs font-bold text-white shadow-sm">
                 HR
               </div>
-              <div className="text-left hidden sm:block">
-                <div className="text-xs font-bold text-slate-900 dark:text-slate-100 leading-tight">HR Team</div>
-                <div className="text-[10px] text-slate-500 dark:text-slate-400">Recruiter</div>
+              <div className="text-left hidden sm:flex items-center gap-1.5">
+                <div>
+                  <div className="text-xs font-bold text-slate-900 dark:text-slate-100 leading-tight">HR Team</div>
+                  <div className="text-[10px] text-slate-500 dark:text-slate-400">Recruiter</div>
+                </div>
+                <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
               </div>
             </div>
           </div>
@@ -1832,29 +1931,270 @@ export default function Home() {
       {/* -------------------- 4. MODAL: SOURCING RUN LAUNCHER -------------------- */}
       {isSourcingModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
-          <div className="w-full max-w-2xl bg-white dark:bg-[#0d1222] border border-slate-200 dark:border-[#1f2b47] rounded-3xl shadow-2xl overflow-hidden flex flex-col">
+          <div className="w-full max-w-2xl bg-white dark:bg-[#0d1222] border border-slate-200 dark:border-[#1f2b47] rounded-3xl shadow-2xl overflow-hidden flex flex-col transition-all duration-300 max-h-[90vh] overflow-y-auto">
             {/* Modal Header */}
-            <div className="p-5 border-b border-slate-100 dark:border-[#18233c] flex items-center justify-between">
+            <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-[#18233c] flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-white shadow-md shadow-indigo-500/20">
-                  <Play className="h-4 w-4 fill-white" />
+                  {sessionState === "waiting_for_login" ? (
+                    <ShieldCheck className="h-5 w-5" />
+                  ) : (
+                    <Play className="h-4 w-4 fill-white" />
+                  )}
                 </div>
                 <div>
-                  <h3 className="text-sm font-black text-slate-900 dark:text-white">Execute Sourcing Run</h3>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">Playwright Chromium Browser Automation & Gemini AI</p>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-black text-slate-900 dark:text-white">
+                      {sessionState === "waiting_for_login" ? "Recruiter Safe Handover Mode" : "Execute Sourcing Run"}
+                    </h3>
+                    {sessionState === "waiting_for_login" && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300">
+                        {browserChannel === "msedge" ? "Edge Live" : browserChannel === "chrome" ? "Chrome Live" : "Chromium Live"}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {sessionState === "waiting_for_login" ? "Human-in-the-Loop Safe LinkedIn Authentication" : "Playwright Browser Automation & Gemini AI"}
+                  </p>
                 </div>
               </div>
               <button
-                onClick={() => setIsSourcingModalOpen(false)}
-                className="h-8 w-8 rounded-lg bg-slate-100 dark:bg-[#141b2e] text-slate-500 hover:text-slate-800 flex items-center justify-center"
+                onClick={() => {
+                  if (sessionState === "waiting_for_login") {
+                    handleStopSourcing();
+                  } else {
+                    setIsSourcingModalOpen(false);
+                  }
+                }}
+                className="h-8 w-8 rounded-lg bg-slate-100 dark:bg-[#141b2e] text-slate-500 hover:text-slate-800 dark:hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+                title="Close"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
             {/* Modal Content */}
-            <div className="p-6 space-y-4">
-              {sourcing || (sessionState !== "idle" && sessionState !== "stopped" && sessionState !== "failed") ? (
+            <div className="p-5 sm:p-6 space-y-4">
+              {sessionState === "waiting_for_login" ? (
+                /* DEDICATED SINGLE-SOURCE RECRUITER SAFE HANDOVER MODE */
+                <div className="space-y-4 text-center py-1">
+                  {/* Shield & Orbit Graphic */}
+                  <div className="relative w-56 h-20 mx-auto flex items-center justify-center">
+                    <div className="absolute w-52 h-16 rounded-full border border-dashed border-indigo-300 dark:border-indigo-700/60 pointer-events-none" />
+                    <span className="absolute top-1 left-10 text-amber-400 font-black text-xs select-none">✦</span>
+                    <span className="absolute bottom-1 right-10 text-amber-400 font-black text-xs select-none">✦</span>
+
+                    {/* LinkedIn Badge */}
+                    <div className="absolute left-2 top-4 w-9 h-9 rounded-xl bg-[#0A66C2] text-white flex items-center justify-center font-black text-base shadow-md shadow-sky-500/30 border-2 border-white dark:border-[#0c1222]">
+                      in
+                    </div>
+
+                    {/* Center Shield with Lock Icon */}
+                    <div className="w-16 h-16 rounded-full bg-indigo-500/10 dark:bg-indigo-500/20 flex items-center justify-center">
+                      <div className="w-11 h-12 rounded-xl bg-gradient-to-b from-[#6366f1] via-[#4f46e5] to-[#4338ca] text-white flex items-center justify-center shadow-lg shadow-indigo-600/40 border border-white/40">
+                        <Lock className="h-5 w-5 text-white stroke-[2.2]" />
+                      </div>
+                    </div>
+
+                    {/* Floating User Badge on Right */}
+                    <div className="absolute right-2 top-4 w-9 h-9 rounded-full bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-700 text-emerald-600 dark:text-emerald-300 flex items-center justify-center shadow-md shadow-emerald-500/20">
+                      <User className="h-4 w-4 stroke-[2.2]" />
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white tracking-tight">
+                      Recruiter <span className="bg-gradient-to-r from-purple-600 to-indigo-600 bg-clip-text text-transparent">Safe Handover</span> Mode
+                    </h3>
+                    <p className="text-[12px] text-slate-500 dark:text-slate-400 max-w-md mx-auto mt-1 leading-relaxed">
+                      To keep your LinkedIn account safe from automated bot detection, please sign in to LinkedIn manually in the opened browser window.
+                    </p>
+                  </div>
+
+                  {/* 4 Step Cards */}
+                  <div className="space-y-2 text-left max-w-lg mx-auto">
+                    {/* Step 1 */}
+                    <div className="flex items-center gap-3 p-2.5 sm:p-3 rounded-xl bg-slate-50/80 dark:bg-[#131b2e] border border-slate-100 dark:border-[#1e293b] hover:border-slate-200 transition-colors">
+                      <div className="w-6 h-6 rounded-full bg-purple-100 dark:bg-purple-950/60 text-purple-600 dark:text-purple-300 font-extrabold text-[11px] flex items-center justify-center shrink-0">
+                        1
+                      </div>
+                      <div className="w-7 h-7 rounded-lg bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-300 flex items-center justify-center shrink-0">
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                          Open LinkedIn in the dedicated agent browser
+                        </h4>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+                          Your dedicated {browserChannel === "msedge" ? "Edge" : browserChannel === "chrome" ? "Chrome" : "Chromium"} browser is open at{" "}
+                          <a
+                            href="https://www.linkedin.com"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-sky-600 dark:text-sky-400 font-semibold underline"
+                          >
+                            https://www.linkedin.com
+                          </a>{" "}
+                          (or click Open LinkedIn ↗ below).
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Step 2 */}
+                    <div className="flex items-center gap-3 p-2.5 sm:p-3 rounded-xl bg-slate-50/80 dark:bg-[#131b2e] border border-slate-100 dark:border-[#1e293b] hover:border-slate-200 transition-colors">
+                      <div className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-300 font-extrabold text-[11px] flex items-center justify-center shrink-0">
+                        2
+                      </div>
+                      <div className="w-7 h-7 rounded-lg bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-300 flex items-center justify-center shrink-0">
+                        <User className="h-3.5 w-3.5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                          Sign in inside that opened browser window
+                        </h4>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+                          Please enter your credentials inside the agent's opened browser window (not your personal desktop Chrome). Your session will be saved in this profile for future runs.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Step 3 */}
+                    <div className="flex items-center gap-3 p-2.5 sm:p-3 rounded-xl bg-slate-50/80 dark:bg-[#131b2e] border border-slate-100 dark:border-[#1e293b] hover:border-slate-200 transition-colors">
+                      <div className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-300 font-extrabold text-[11px] flex items-center justify-center shrink-0">
+                        3
+                      </div>
+                      <div className="w-7 h-7 rounded-lg bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-300 flex items-center justify-center shrink-0">
+                        <HomeIcon className="h-3.5 w-3.5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                          Ensure your LinkedIn home screen is loaded
+                        </h4>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+                          Verify that you can see your LinkedIn feed or home page after signing in.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Step 4 */}
+                    <div className="flex items-center gap-3 p-2.5 sm:p-3 rounded-xl bg-slate-50/80 dark:bg-[#131b2e] border border-slate-100 dark:border-[#1e293b] hover:border-slate-200 transition-colors">
+                      <div className="w-6 h-6 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-300 font-extrabold text-[11px] flex items-center justify-center shrink-0">
+                        4
+                      </div>
+                      <div className="w-7 h-7 rounded-lg bg-rose-50 dark:bg-rose-900/30 text-rose-600 dark:text-rose-300 flex items-center justify-center shrink-0">
+                        <ArrowLeft className="h-3.5 w-3.5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                          Return to Hiring Desk
+                        </h4>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+                          Once you are signed in, come back to this page and click &ldquo;I&apos;ve Logged In — Continue&rdquo;.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* AI Screen Verification Feedback Alert */}
+                  {(verificationFeedback || sessionError) && (
+                    <div
+                      className={`p-3 rounded-xl text-left border flex items-start gap-2.5 transition-all max-w-lg mx-auto ${
+                        (verificationFeedback?.type === "error" || sessionError)
+                          ? "bg-rose-500/10 border-rose-500/40 text-rose-900 dark:text-rose-200"
+                          : "bg-emerald-500/10 border-emerald-500/40 text-emerald-900 dark:text-emerald-200"
+                      }`}
+                    >
+                      {(verificationFeedback?.type === "error" || sessionError) ? (
+                        <AlertCircle className="h-4 w-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+                      ) : (
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                      )}
+                      <div className="space-y-0.5 text-xs flex-1">
+                        <div className="font-extrabold text-xs">
+                          {verificationFeedback?.title || "⚠️ Login Verification Required"}
+                        </div>
+                        <p className="leading-snug opacity-95 text-[11px]">
+                          {verificationFeedback?.message || sessionError}
+                        </p>
+                        {verificationFeedback?.screenTitle && (
+                          <div className="text-[10px] font-mono bg-white/70 dark:bg-black/30 px-2 py-0.5 rounded inline-block border border-rose-200 dark:border-rose-900/50 mt-1">
+                            Screen Detected by AI Agent: &quot;{verificationFeedback.screenTitle}&quot;
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Action Buttons: Open LinkedIn & Continue */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg mx-auto pt-1">
+                    <button
+                      type="button"
+                      onClick={handleOpenLinkedInTab}
+                      className="flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-[#7c3aed] to-[#6366f1] hover:from-[#6d28d9] hover:to-[#4f46e5] text-white font-bold text-xs sm:text-sm shadow-md shadow-indigo-500/25 transition-all cursor-pointer hover:shadow-indigo-500/40 hover:-translate-y-0.5 active:translate-y-0"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                      <span>Open LinkedIn ↗</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleVerifyAndContinue}
+                      disabled={isVerifyingScreen}
+                      className="flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-[#059669] to-[#10b981] hover:from-[#047857] hover:to-[#059669] text-white font-bold text-xs sm:text-sm shadow-md shadow-emerald-500/25 transition-all cursor-pointer hover:shadow-emerald-500/40 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {isVerifyingScreen ? (
+                        <>
+                          <RefreshCw className="h-4 w-4 animate-spin" />
+                          <span>AI Agent Verifying Screen...</span>
+                        </>
+                      ) : (
+                        <>
+                          <div className="h-4 w-4 rounded-full bg-white/20 flex items-center justify-center">
+                            <Check className="h-2.5 w-2.5 text-white stroke-[3]" />
+                          </div>
+                          <span>I&apos;ve Logged In — Continue →</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Bottom Info Pill */}
+                  <div className="p-3 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-100/80 dark:border-indigo-900/40 text-left flex items-start gap-2.5 max-w-lg mx-auto">
+                    <div className="h-5 w-5 rounded-full bg-indigo-100 dark:bg-indigo-900/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0 mt-0.5">
+                      <Info className="h-3 w-3" />
+                    </div>
+                    <div className="space-y-0.5">
+                      <div className="text-[11px] font-bold text-indigo-950 dark:text-indigo-200">
+                        The AI Agent is safely paused.
+                      </div>
+                      <p className="text-[10px] text-indigo-800/80 dark:text-indigo-300/80 leading-relaxed">
+                        Hiring Desk runs a dedicated browser profile to avoid locking or altering your personal browser data. Once you sign in inside the opened window, your session is saved permanently and the agent takes over UI traversal.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Action links */}
+                  <div className="flex items-center justify-between max-w-lg mx-auto pt-1 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleStopSourcing();
+                        handleLaunchSourcing("demo");
+                      }}
+                      className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 underline font-medium transition-colors cursor-pointer"
+                    >
+                      Switch to Offline Demo →
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleStopSourcing}
+                      className="text-rose-500 hover:text-rose-700 font-medium transition-colors cursor-pointer"
+                    >
+                      Cancel Sourcing
+                    </button>
+                  </div>
+                </div>
+              ) : sourcing || (sessionState !== "idle" && sessionState !== "stopped" && sessionState !== "failed") ? (
                 /* LIVE EXECUTION MONITOR & STEPPER */
                 <div className="space-y-4">
                   {/* Status Card */}
@@ -1878,7 +2218,7 @@ export default function Home() {
                         <div className="text-sm font-black text-white">
                           {searchMode === "simulation"
                             ? "Mode A — Autonomous UI Agent Collection"
-                            : "Mode B — Direct Live LinkedIn Sourcing"}
+                            : `Mode B — Direct Live LinkedIn Sourcing (${browserChannel === "msedge" ? "Microsoft Edge" : browserChannel === "chrome" ? "Google Chrome" : "Chromium"})`}
                         </div>
                       </div>
                     </div>
@@ -1895,9 +2235,7 @@ export default function Home() {
                           ? "bg-emerald-500"
                           : sessionState === "failed"
                             ? "bg-rose-500"
-                            : sessionState === "waiting_for_login"
-                              ? "bg-amber-500"
-                              : "bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-400"
+                            : "bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-400"
                         }`}
                       style={{ width: `${sessionProgress}%` }}
                     />
@@ -1906,7 +2244,7 @@ export default function Home() {
                   {/* 5-Step Visual Stepper */}
                   <div className="grid grid-cols-5 gap-1.5">
                     {[
-                      { key: "launching_browser", label: "1. Launch", desc: "Chromium Headed" },
+                      { key: "launching_browser", label: "1. Launch", desc: `${browserChannel === "msedge" ? "Edge" : browserChannel === "chrome" ? "Chrome" : "Chromium"} Headed` },
                       { key: "waiting_for_login", label: "2. Cookie/Login", desc: "Session Check" },
                       { key: "searching", label: "3. LinkedIn Search", desc: "People Traversal" },
                       { key: "extracting", label: "4. Profile Extract", desc: "Resumes & Skills" },
@@ -1916,18 +2254,15 @@ export default function Home() {
                       const currentIdx = stepOrder.indexOf(sessionState);
                       const isPast = (currentIdx > idx && currentIdx !== -1) || sessionState === "completed";
                       const isCurrent = currentIdx === idx && sessionState !== "completed";
-                      const isWaitingLogin = step.key === "waiting_for_login" && sessionState === "waiting_for_login";
 
                       return (
                         <div
                           key={step.key}
-                          className={`p-2 rounded-xl border text-center transition-all ${isWaitingLogin
-                              ? "bg-amber-50 dark:bg-amber-950/40 border-amber-500 text-amber-900 dark:text-amber-200 font-bold ring-2 ring-amber-500/50 animate-pulse"
-                              : isPast
-                                ? "bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 font-semibold"
-                                : isCurrent
-                                  ? "bg-indigo-50/90 dark:bg-indigo-950/40 border-indigo-500 text-indigo-900 dark:text-indigo-200 shadow-sm ring-1 ring-indigo-500 font-bold"
-                                  : "bg-slate-50 dark:bg-[#11172a] border-slate-200 dark:border-[#1d2745] text-slate-400 font-normal"
+                          className={`p-2 rounded-xl border text-center transition-all ${isPast
+                              ? "bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 font-semibold"
+                              : isCurrent
+                                ? "bg-indigo-50/90 dark:bg-indigo-950/40 border-indigo-500 text-indigo-900 dark:text-indigo-200 shadow-sm ring-1 ring-indigo-500 font-bold"
+                                : "bg-slate-50 dark:bg-[#11172a] border-slate-200 dark:border-[#1d2745] text-slate-400 font-normal"
                             }`}
                         >
                           <div className="text-[11px] truncate">{step.label}</div>
@@ -1936,59 +2271,6 @@ export default function Home() {
                       );
                     })}
                   </div>
-
-                  {/* Human-in-the-Loop Handover Card when Login is Required */}
-                  {sessionState === "waiting_for_login" && (
-                    <div className="p-4 rounded-2xl bg-amber-500/10 dark:bg-amber-950/30 border-2 border-amber-500/60 shadow-lg space-y-3">
-                      <div className="flex items-start gap-3">
-                        <div className="h-10 w-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-md">
-                          <Lock className="h-5 w-5" />
-                        </div>
-                        <div className="space-y-1 flex-1">
-                          <div className="flex items-center justify-between">
-                            <h4 className="text-sm font-black text-amber-900 dark:text-amber-200">
-                              Action Required: Sign In to LinkedIn in Browser
-                            </h4>
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 animate-pulse">
-                              Awaiting Login
-                            </span>
-                          </div>
-                          <p className="text-xs text-amber-800 dark:text-amber-200/90 leading-relaxed">
-                            The Chromium browser is open on your desktop at the LinkedIn login page. Please take control of the browser window and sign in. Once you are logged in, click the button below so the AI Agent can take control of the UI and extract candidates.
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 pt-1">
-                        <button
-                          onClick={handleResumeSourcing}
-                          disabled={isResumingSession}
-                          className="flex-1 flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 text-white text-xs font-black shadow-lg shadow-emerald-600/30 transition-all cursor-pointer"
-                        >
-                          {isResumingSession ? (
-                            <>
-                              <RefreshCw className="h-4 w-4 animate-spin" />
-                              <span>Verifying Login &amp; Resuming Agent Control...</span>
-                            </>
-                          ) : (
-                            <>
-                              <Check className="h-4 w-4" />
-                              <span>Proceed (I&apos;ve Logged In — Resume Agent Control)</span>
-                            </>
-                          )}
-                        </button>
-                        <button
-                          onClick={() => {
-                            handleStopSourcing();
-                            handleLaunchSourcing("simulation");
-                          }}
-                          className="px-3.5 py-3 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold transition-colors cursor-pointer"
-                          title="Switch to simulated collection without logging in"
-                        >
-                          Switch to Demo
-                        </button>
-                      </div>
-                    </div>
-                  )}
 
                   {/* Live Status Description */}
                   <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#0c1222] border border-slate-200 dark:border-[#1a243f] text-xs text-slate-700 dark:text-slate-200 flex items-start gap-3">
@@ -2004,7 +2286,7 @@ export default function Home() {
                   {/* Browser Live Notice */}
                   <div className="p-2.5 rounded-xl bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200/60 dark:border-indigo-800/60 text-[11px] text-indigo-700 dark:text-indigo-300 flex items-center gap-2">
                     <ShieldCheck className="h-4 w-4 text-indigo-600 shrink-0" />
-                    <span>The headed Chromium browser is running live on your desktop. You can see pages and candidate cards being processed in real-time.</span>
+                    <span>The headed {browserChannel === "msedge" ? "Edge" : browserChannel === "chrome" ? "Chrome" : "Chromium"} browser is running live on your desktop. You can see pages and candidate cards being processed in real-time.</span>
                   </div>
                 </div>
               ) : (
@@ -2051,8 +2333,9 @@ export default function Home() {
                         onChange={(e) => setSearchMode(e.target.value)}
                         className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1e2a48] text-xs font-medium text-slate-800 dark:text-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-indigo-500"
                       >
-                        <option value="simulation">Mode A — 🤖 Automatic Collection (Intelligent Simulation & DB Persistence)</option>
-                        <option value="live_linkedin">Mode B — 🌐 Live LinkedIn Sourcing (Direct Chromium Session & Login Handover)</option>
+                        <option value="autonomous">Mode A — 🤖 Autonomous Sourcing (Direct Real LinkedIn & Auto-Harvest)</option>
+                        <option value="live_linkedin">Mode B — 🌐 Guided Live Sourcing (Headed Browser & Safe Handover)</option>
+                        <option value="demo">🧪 Offline Demo (Simulated Profiles for Testing)</option>
                       </select>
                     </div>
                     <div>
@@ -2069,10 +2352,46 @@ export default function Home() {
                     </div>
                   </div>
 
+                  {/* Browser Engine & Account Selection (Chrome vs Edge vs Chromium) */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                        Browser &amp; Account Selection
+                      </label>
+                      <span className="text-[10px] text-indigo-500 font-semibold">
+                        Choose browser for LinkedIn session
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { id: "chrome", label: "Google Chrome", badge: "Recommended", icon: "🌐", desc: "Use Chrome & saved login" },
+                        { id: "msedge", label: "Microsoft Edge", badge: "Windows Default", icon: "🌊", desc: "Use Edge & saved login" },
+                        { id: "chromium", label: "Chromium Sandbox", badge: "Isolated", icon: "🚀", desc: "Clean test browser environment" },
+                      ].map((b) => (
+                        <button
+                          key={b.id}
+                          type="button"
+                          onClick={() => setBrowserChannel(b.id)}
+                          className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                            browserChannel === b.id
+                              ? "bg-indigo-50/90 dark:bg-indigo-600/25 border-indigo-500 text-indigo-900 dark:text-white ring-2 ring-indigo-500/40 font-bold"
+                              : "bg-slate-50 dark:bg-[#10162a] border-slate-200 dark:border-[#1e2a48] text-slate-600 dark:text-slate-400 hover:border-slate-300"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs truncate font-bold">{b.icon} {b.label}</span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-normal shrink-0">{b.badge}</span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 font-normal leading-tight">{b.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/20 text-xs text-indigo-700 dark:text-indigo-300 flex items-start gap-2.5">
                     <ShieldCheck className="h-4 w-4 shrink-0 mt-0.5 text-indigo-600 dark:text-indigo-400" />
                     <span>
-                      <strong>Direct LinkedIn Headed Browser:</strong> Mode B launches a visible Chromium browser window directly to LinkedIn on your desktop, verifies cookies, and guides login handover with a Proceed button if sign-in is needed. Mode A runs interactive candidate profile traversal.
+                      <strong>Direct LinkedIn Headed Browser:</strong> Mode B launches a visible {browserChannel === "msedge" ? "Microsoft Edge" : browserChannel === "chrome" ? "Google Chrome" : "Chromium"} browser window directly to LinkedIn on your desktop. If you are already signed into LinkedIn in your chosen browser, the agent detects the session immediately. After harvesting, it automatically returns back to this Hiring Desk portal.
                     </span>
                   </div>
                 </>
@@ -2100,8 +2419,17 @@ export default function Home() {
                   </button>
                   <div className="flex items-center gap-2 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
                     <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                    <span>Automation running in Chromium...</span>
+                    <span>
+                      Automation running in{" "}
+                      {browserChannel === "msedge"
+                        ? "Microsoft Edge"
+                        : browserChannel === "chrome"
+                        ? "Google Chrome"
+                        : "Chromium"}
+                      ...
+                    </span>
                   </div>
+
                 </>
               ) : sessionState === "completed" ? (
                 <>

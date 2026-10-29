@@ -53,15 +53,17 @@ async def start_sourcing_session(request: StartSessionRequest, background_tasks:
 
     async def _execute_sourcing():
         try:
-            if request.mode == "simulation":
+            if request.mode in ("simulation", "demo", "offline_demo"):
                 await browser_service.search_linkedin(
                     keywords=request.keywords,
                     max_results=request.max_results,
-                    mode="simulation",
+                    mode=request.mode,
                     deep_scrape=request.deep_scrape,
                     session_id=session_id,
+                    browser_channel=request.browser_channel or "chrome",
                 )
             else:
+                # Mode A ("autonomous") and Mode B ("live_linkedin") execute REAL live LinkedIn sourcing
                 await browser_service.search_live_linkedin(
                     keywords=request.keywords,
                     max_results=request.max_results,
@@ -86,20 +88,46 @@ async def start_sourcing_session(request: StartSessionRequest, background_tasks:
     }
 
 
+class OpenTabRequest(BaseModel):
+    browser_channel: Optional[str] = "chrome"
+
+
+@router.post("/open-linkedin-tab")
+async def open_linkedin_tab(req: Optional[OpenTabRequest] = None):
+    """Opens or focuses a LinkedIn tab in the headed browser."""
+    try:
+        channel = req.browser_channel if req else "chrome"
+        res = await browser_service.open_linkedin_tab(browser_channel=channel)
+        return res
+    except Exception as e:
+        logger.exception("Failed to open LinkedIn tab: %s", e)
+        return {
+            "status": "error",
+            "message": f"Browser launch error: {str(e)}",
+            "error_type": type(e).__name__,
+        }
+
+
+@router.post("/verify-screen")
+async def verify_linkedin_screen(req: ResumeSessionRequest):
+    """AI Agent inspects the browser screen to verify if LinkedIn is logged in."""
+    res = await browser_service.verify_linkedin_screen(session_id=req.session_id)
+    return res
+
+
 @router.post("/resume-session")
 async def resume_sourcing_session(req: ResumeSessionRequest):
-    """Signals an active sourcing session waiting for recruiter login to resume agent control."""
-    success = browser_service.tracker.resume_session(req.session_id)
-    if not success:
-        sess = browser_service.tracker.get_session(req.session_id)
-        if sess:
-            browser_service.tracker.update_session(req.session_id, resumed=True)
-            success = True
-    return {
-        "status": "resumed" if success else "not_found",
-        "session_id": req.session_id,
-        "message": "Proceed signal accepted. Agent is verifying session and taking control of UI.",
-    }
+    """Verifies LinkedIn login AND signals an active sourcing session to resume.
+    
+    This is the endpoint called when the user clicks "I've Logged In — Continue".
+    It first verifies authentication, and if verified, also signals the background
+    sourcing task to proceed (resume_on_success=True).
+    """
+    verification = await browser_service.verify_linkedin_screen(
+        session_id=req.session_id,
+        resume_on_success=True,
+    )
+    return verification
 
 
 @router.get("/session/{session_id}")

@@ -200,6 +200,27 @@ class DedicatedBrowserRunner:
         return await asyncio.wrap_future(future)
 
 
+def _clean_stale_profile_locks(profile_dir: str):
+    """Removes stale Chromium/Chrome lockfiles left by previous aborted or crashed runs."""
+    if not os.path.exists(profile_dir):
+        return
+    lock_files = [
+        "lockfile",
+        "SingletonLock",
+        "SingletonCookie",
+        "SingletonSocket",
+        "DevToolsActivePort",
+    ]
+    for fname in lock_files:
+        fpath = os.path.join(profile_dir, fname)
+        if os.path.exists(fpath):
+            try:
+                os.remove(fpath)
+                logger.info("Removed stale lockfile: %s", fpath)
+            except Exception as e:
+                logger.debug("Could not remove lockfile %s: %s", fpath, e)
+
+
 class _LinkedInBrowserEngine:
     """Internal engine executing within the dedicated browser thread."""
 
@@ -212,12 +233,20 @@ class _LinkedInBrowserEngine:
         self._lock = asyncio.Lock()
 
     async def _get_or_create_context(self, browser_channel: Optional[str] = "chrome") -> Tuple[BrowserContext, Page]:
-        """Launches or reuses a persistent browser context with the requested channel (chrome, msedge, or chromium)."""
+        """Launches or reuses a persistent browser context with the requested channel (chrome, msedge, or chromium).
+        
+        Anti-detection measures:
+        - Masks navigator.webdriver completely at prototype and instance level
+        - Removes --enable-automation and avoids --disable-extensions flag
+        - Injects realistic Chrome runtime, plugins, mimeTypes, languages, and WebGL GPU vendor
+        - Uses native channel launch so Playwright manages Windows process isolation safely
+        """
         if self._playwright is None:
             self._playwright = await async_playwright().start()
 
         # Determine user data dir and channel
         selected_channel = (browser_channel or "chrome").lower().strip()
+        channel = None
         if selected_channel in ("chrome", "google-chrome", "google_chrome"):
             channel = "chrome"
             profile_dir = os.path.abspath(os.path.join("data", "browser_profile_chrome"))
@@ -227,12 +256,14 @@ class _LinkedInBrowserEngine:
         else:
             channel = None
             profile_dir = os.path.abspath(os.path.join("data", "browser_profile"))
+
         os.makedirs(profile_dir, exist_ok=True)
+        _clean_stale_profile_locks(profile_dir)
 
         # If existing context has a different channel or is closed, reset context
         if self._context is not None:
-            if getattr(self, "_current_channel", None) != channel:
-                logger.info("Switching browser channel from %s to %s", self._current_channel, channel)
+            if getattr(self, "_current_channel", None) != (channel or "chromium"):
+                logger.info("Switching browser channel from %s to %s", self._current_channel, channel or "chromium")
                 try:
                     await self._context.close()
                 except Exception:
@@ -247,31 +278,69 @@ class _LinkedInBrowserEngine:
 
         if self._context is None:
             logger.info("Launching persistent Playwright context (channel=%s) at %s", channel, profile_dir)
+
+            # Realistic desktop Windows Chrome 131 user-agent
+            realistic_ua = (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            )
+
             launch_kwargs = {
                 "user_data_dir": profile_dir,
                 "headless": settings.PLAYWRIGHT_HEADLESS,
-                "viewport": {"width": 1280, "height": 820},
+                "no_viewport": True,
+                "user_agent": realistic_ua,
+                "ignore_default_args": ["--enable-automation"],
                 "args": [
                     "--disable-blink-features=AutomationControlled",
                     "--start-maximized",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--disable-infobars",
+                    "--disable-dev-shm-usage",
+                    "--no-sandbox",
                 ],
-                "user_agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0.0.0 Safari/537.36"
-                ),
+                "timeout": 30000,
             }
             if channel:
                 launch_kwargs["channel"] = channel
 
             try:
                 self._context = await self._playwright.chromium.launch_persistent_context(**launch_kwargs)
-                self._current_channel = channel
+                self._current_channel = channel or "chromium"
+                logger.info("Successfully launched persistent context (channel=%s)", self._current_channel)
             except Exception as e:
-                logger.warning("Failed to launch with channel=%s: %s. Falling back to default bundled Chromium.", channel, e)
-                launch_kwargs.pop("channel", None)
-                self._context = await self._playwright.chromium.launch_persistent_context(**launch_kwargs)
-                self._current_channel = None
+                logger.warning("Failed to launch with channel=%s: %s. Attempting fallback...", channel, e)
+                fallback_succeeded = False
+                if channel == "chrome":
+                    try:
+                        logger.info("Attempting fallback from chrome to msedge...")
+                        edge_profile_dir = os.path.abspath(os.path.join("data", "browser_profile_edge"))
+                        os.makedirs(edge_profile_dir, exist_ok=True)
+                        _clean_stale_profile_locks(edge_profile_dir)
+                        edge_kwargs = dict(launch_kwargs)
+                        edge_kwargs["user_data_dir"] = edge_profile_dir
+                        edge_kwargs["channel"] = "msedge"
+                        self._context = await self._playwright.chromium.launch_persistent_context(**edge_kwargs)
+                        self._current_channel = "msedge"
+                        fallback_succeeded = True
+                        logger.info("Successfully launched with fallback msedge!")
+                    except Exception as edge_err:
+                        logger.warning("msedge fallback failed: %s", edge_err)
+
+                if not fallback_succeeded:
+                    logger.info("Falling back to default bundled Chromium...")
+                    default_profile_dir = os.path.abspath(os.path.join("data", "browser_profile"))
+                    os.makedirs(default_profile_dir, exist_ok=True)
+                    _clean_stale_profile_locks(default_profile_dir)
+                    launch_kwargs["user_data_dir"] = default_profile_dir
+                    launch_kwargs.pop("channel", None)
+                    self._context = await self._playwright.chromium.launch_persistent_context(**launch_kwargs)
+                    self._current_channel = "chromium"
+
+            # Inject comprehensive anti-detection scripts on browser context
+            await self._setup_anti_detection(self._context)
 
         pages = self._context.pages
         page = pages[0] if pages else await self._context.new_page()
@@ -280,6 +349,125 @@ class _LinkedInBrowserEngine:
         except Exception:
             pass
         return self._context, page
+
+    async def _setup_anti_detection(self, context: BrowserContext):
+        """Injects stealth anti-detection scripts into every page to mask Playwright automation signals."""
+        anti_detect_script = """
+        (() => {
+            // 1. Fully eliminate navigator.webdriver detection
+            try {
+                if ('webdriver' in navigator) {
+                    delete Object.getPrototypeOf(navigator).webdriver;
+                }
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined,
+                    configurable: true,
+                    enumerable: false,
+                });
+            } catch (e) {}
+
+            // 2. Mock full window.chrome runtime & app objects
+            try {
+                if (!window.chrome) {
+                    window.chrome = {};
+                }
+                if (!window.chrome.app) {
+                    window.chrome.app = {
+                        isInstalled: false,
+                        InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+                        RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+                    };
+                }
+                if (!window.chrome.runtime) {
+                    window.chrome.runtime = {
+                        id: undefined,
+                        connect: () => ({ onMessage: { addListener: () => {} }, postMessage: () => {} }),
+                        sendMessage: () => {},
+                    };
+                }
+            } catch (e) {}
+
+            // 3. Mock genuine plugins & mimeTypes
+            try {
+                if (!navigator.plugins || navigator.plugins.length === 0) {
+                    const fakePlugins = [
+                        { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                        { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+                        { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
+                    ];
+                    Object.defineProperty(navigator, 'plugins', {
+                        get: () => fakePlugins,
+                        enumerable: true,
+                        configurable: true,
+                    });
+                }
+            } catch (e) {}
+
+            // 4. Mock languages
+            try {
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['en-US', 'en'],
+                    enumerable: true,
+                    configurable: true,
+                });
+            } catch (e) {}
+
+            // 5. Hardware concurrency & device memory
+            try {
+                Object.defineProperty(navigator, 'hardwareConcurrency', {
+                    get: () => 8,
+                    configurable: true,
+                });
+                Object.defineProperty(navigator, 'deviceMemory', {
+                    get: () => 8,
+                    configurable: true,
+                });
+            } catch (e) {}
+
+            // 6. WebGL GPU vendor & renderer masking (avoids SwiftShader / headless detection)
+            try {
+                const maskWebGL = (glContext) => {
+                    if (!glContext || !glContext.prototype) return;
+                    const origGetParam = glContext.prototype.getParameter;
+                    glContext.prototype.getParameter = function(param) {
+                        // UNMASKED_VENDOR_WEBGL
+                        if (param === 37445) return 'Google Inc. (NVIDIA)';
+                        // UNMASKED_RENDERER_WEBGL
+                        if (param === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+                        return origGetParam.call(this, param);
+                    };
+                };
+                if (window.WebGLRenderingContext) maskWebGL(WebGLRenderingContext);
+                if (window.WebGL2RenderingContext) maskWebGL(WebGL2RenderingContext);
+            } catch (e) {}
+
+            // 7. Permissions query consistency
+            try {
+                if (window.navigator && window.navigator.permissions && window.navigator.permissions.query) {
+                    const origQuery = window.navigator.permissions.query;
+                    window.navigator.permissions.query = (parameters) => {
+                        if (parameters.name === 'notifications') {
+                            return Promise.resolve({ state: Notification.permission });
+                        }
+                        return origQuery(parameters);
+                    };
+                }
+            } catch (e) {}
+        })();
+        """
+        try:
+            await context.add_init_script(anti_detect_script)
+            logger.info("Comprehensive anti-detection init script registered on browser context.")
+        except Exception as e:
+            logger.debug("Could not add anti-detection init script: %s", e)
+
+        # Also inject into all existing pages immediately
+        for page in context.pages:
+            try:
+                await page.evaluate(anti_detect_script)
+            except Exception:
+                pass
+
 
     async def has_linkedin_cookie(self) -> bool:
         """Inspects browser context cookies for active LinkedIn authentication (li_at)."""
@@ -296,26 +484,57 @@ class _LinkedInBrowserEngine:
         return False
 
     async def is_authenticated_session(self, page: Page) -> bool:
-        """Strictly checks if the browser has an active, authenticated LinkedIn session.
+        """Thoroughly checks if the browser has an active, authenticated LinkedIn session.
+        
+        Uses multiple signals:
+        1. URL pattern analysis (login/authwall/signup = not authenticated)
+        2. li_at session cookie presence
+        3. DOM elements indicating logged-in state (global nav, feed, profile)
+        4. Page title heuristics ("LinkedIn" vs "Log In or Sign Up")
         
         Returns False if on any authwall, login, checkpoint, or signup screen.
         """
         try:
             curr_url = page.url or ""
+            # about:blank or empty URL means we haven't navigated yet
+            if not curr_url or "about:blank" in curr_url:
+                return False
             # Any authwall, checkpoint, or login page immediately means unauthenticated
-            if any(x in curr_url for x in ["login", "checkpoint", "authwall", "signup", "uas/login"]):
+            if any(x in curr_url.lower() for x in ["/login", "/checkpoint", "/authwall", "/signup", "uas/login"]):
                 return False
         except Exception:
             pass
 
-        # Check for genuine session cookie
+        # Check for genuine session cookie (most reliable signal)
         if await self.has_linkedin_cookie():
             return True
 
-        # Check for authenticated DOM elements
+        # Check for authenticated DOM elements (multiple selectors for robustness)
+        auth_selectors = [
+            "#global-nav",
+            ".global-nav__me",
+            ".feed-identity-module",
+            "[data-view-name*='profile-card']",
+            ".scaffold-layout__main",
+            "div[data-test-global-nav]",
+            "nav.global-nav",
+            ".feed-shared-actor",
+            ".share-box-feed-entry__trigger",
+        ]
         try:
-            nav = await page.query_selector("#global-nav, .global-nav__me, .feed-identity-module, [data-view-name*='profile-card']")
-            if nav:
+            for sel in auth_selectors:
+                elem = await page.query_selector(sel)
+                if elem:
+                    logger.debug("Auth detected via DOM selector: %s", sel)
+                    return True
+        except Exception:
+            pass
+
+        # Heuristic: check page title — logged-in LinkedIn shows "Feed | LinkedIn" or "(N) LinkedIn"
+        try:
+            title = (await page.title() or "").lower()
+            if "linkedin" in title and not any(x in title for x in ["log in", "sign up", "sign in", "join"]):
+                # Title looks authenticated (e.g. "Feed | LinkedIn" or "John Doe | LinkedIn")
                 return True
         except Exception:
             pass
@@ -429,11 +648,13 @@ class _LinkedInBrowserEngine:
             )
 
         async with self._lock:
-            try:
-                _, page = await self._get_or_create_context(browser_channel=browser_channel)
-                await page.bring_to_front()
+            _, page = await self._get_or_create_context(browser_channel=browser_channel)
+            await page.bring_to_front()
 
+        try:
+            if True:
                 if session_id:
+
                     sess = sourcing_tracker.get_session(session_id)
                     if sess and sess.get("should_stop"):
                         return [], search_url, "Sourcing session stopped by user."
@@ -579,10 +800,23 @@ class _LinkedInBrowserEngine:
 
                 candidates = await self._extract_candidate_cards(page, max_results)
 
-                # If DOM cards could not be found (anti-bot or non-standard view), use query-tailored candidate pool
                 if not candidates:
-                    logger.info("Direct DOM extraction found 0 cards on LinkedIn search. Loading verified candidate pool with visual avatars.")
-                    candidates = self._generate_simulated_candidates(keywords, max_results)
+                    logger.info("Direct DOM extraction found 0 cards on LinkedIn search for query: '%s'.", keywords)
+                    if await self.is_account_restricted(page):
+                        raise RuntimeError("LinkedIn Account Verification Required: LinkedIn is currently requesting security/identity verification. Please complete verification directly in the opened browser window.")
+                    curr_p_url = page.url or ""
+                    if any(x in curr_p_url for x in ["login", "checkpoint", "authwall", "signup"]):
+                        raise RuntimeError(f"LinkedIn session unauthenticated (current page: {curr_p_url}). Please log in to view candidate search results.")
+                    
+                    if session_id:
+                        sourcing_tracker.update_session(
+                            session_id,
+                            state="completed",
+                            progress=100,
+                            message=f"LinkedIn search returned 0 matching candidate profiles for query: '{keywords}'. Try broader keywords in the JD editor.",
+                            candidates=[],
+                        )
+                    return [], search_url, f"LinkedIn returned 0 results for query '{keywords}'."
 
                 # Step 4: Autonomous UI Agent Loop — Visit profiles one-by-one to extract detailed resumes & avatars
                 if deep_scrape:
@@ -707,24 +941,19 @@ class _LinkedInBrowserEngine:
                     f"SUCCESS_LIVE_LINKEDIN: Autonomous agent sourced {len(candidates)} candidate profiles directly from LinkedIn into SQLite database and returned to portal.",
                 )
 
-            except Exception as e:
-                logger.error("Error during live LinkedIn search: %s", e)
-                simulated = self._generate_simulated_candidates(keywords, max_results)
-                for cand in simulated:
-                    db_service.save_candidate(cand.model_dump() if hasattr(cand, "model_dump") else cand.dict())
-                if session_id:
-                    sourcing_tracker.update_session(
-                        session_id,
-                        state="completed",
-                        progress=100,
-                        message=f"Completed with {len(simulated)} candidate profiles persisted to SQLite database.",
-                        candidates=[c.model_dump() if hasattr(c, "model_dump") else c.dict() for c in simulated],
-                    )
-                return (
-                    simulated,
-                    search_url,
-                    f"SUCCESS_FALLBACK: Sourced {len(simulated)} verified candidate profiles into SQLite database.",
+        except Exception as e:
+            logger.exception("Error during live LinkedIn search: %s", e)
+            err_msg = f"{type(e).__name__}: {str(e)}"
+            if session_id:
+                sourcing_tracker.update_session(
+                    session_id,
+                    state="failed",
+                    progress=0,
+                    error=err_msg,
+                    message=f"Browser search failed: {err_msg[:120]}",
                 )
+            raise
+
 
     async def search_live_browser_ocr(
         self,
@@ -748,76 +977,121 @@ class _LinkedInBrowserEngine:
         deep_scrape: bool = True,
         timeout_seconds: int = 45,
         session_id: Optional[str] = None,
+        browser_channel: Optional[str] = "chrome",
     ) -> Tuple[List[CandidateProfile], str, str]:
-        """Navigates to LinkedIn or Simulation, executes candidate search, and visits profiles."""
-        if mode == "simulation":
-            logger.info("Executing autonomous UI agent simulation in headed Chromium browser for query: %s", keywords)
-            async with self._lock:
-                try:
-                    _, page = await self._get_or_create_context()
-                    candidates = await self._run_autonomous_ui_demo(page, keywords, max_results, session_id=session_id)
-                    sim_file_path = os.path.abspath(os.path.join("data", "agent_simulation.html"))
-                    search_url = f"file:///{sim_file_path.replace(os.sep, '/')}"
-                    return (
-                        candidates,
-                        search_url,
-                        f"SUCCESS_AUTONOMOUS: AI Agent took control of browser UI, visited {len(candidates)} candidate profiles one-by-one, extracted detailed resumes, and saved to SQLite DB."
-                    )
-                except Exception as e:
-                    logger.error("Error during autonomous UI simulation: %s", e)
-                    simulated = self._generate_simulated_candidates(keywords, max_results)
-                    return simulated, search_url, f"WARNING: Simulation UI interaction error ({str(e)[:80]}). Using fallback preview."
+        """Navigates to LinkedIn, executes candidate search, and visits profiles.
+        
+        Mode A (autonomous / simulation with session): Autonomous agent sourcing on real LinkedIn in background.
+            - If already logged in, proceeds directly to search and profile extraction.
+            - If not logged in, enters safe login handover flow.
+        Mode B (live_linkedin): Guided live LinkedIn sourcing with headed browser.
+        Offline Demo (demo / offline_demo / simulation without session_id): Uses offline test profiles.
+        """
+        # If offline demo or simulation mode
+        if mode in ("demo", "offline_demo", "simulation"):
+            logger.info("Simulation/demo mode: Generating candidate profiles for query: %s", keywords)
+            candidates = self._generate_simulated_candidates(keywords, max_results)
+            if session_id:
+                sourcing_tracker.update_session(
+                    session_id,
+                    state="completed",
+                    progress=100,
+                    message=f"Offline demo completed: Generated {len(candidates)} candidate profiles for offline testing.",
+                    candidates=[c.model_dump() if hasattr(c, "model_dump") else c.dict() for c in candidates],
+                )
+            return candidates, "https://www.linkedin.com/search/results/people", f"DEMO_OFFLINE: Generated {len(candidates)} candidate profiles for offline testing."
 
-        # All live modes (live_linkedin, live_ocr, linkedin, live_browser) execute direct live LinkedIn sourcing
+        # All live modes (autonomous, simulation with session, live_linkedin) execute direct live LinkedIn sourcing
         return await self.search_live_linkedin(
             keywords=keywords,
             max_results=max_results,
             deep_scrape=deep_scrape,
+            browser_channel=browser_channel,
             session_id=session_id,
         )
 
     async def _extract_candidate_cards(self, page: Page, max_results: int) -> List[CandidateProfile]:
-        """Extracts structured candidate cards from the active LinkedIn search page DOM."""
+        """Extracts structured candidate cards from the active LinkedIn search page DOM.
+        
+        Uses multiple resilient selectors to support all LinkedIn interface versions:
+        1. Universal template: div[data-view-name*="result"]
+        2. Modern list items: li.reusable-search__result-container, ul.reusable-search__entity-result-list > li
+        3. Classic cards: div.entity-result, div[data-chameleon-result-urn]
+        4. Fallback anchor scanning: any card container wrapping an /in/ profile link
+        """
         candidates = []
 
-        # Find all card containers
+        # Give page time to load dynamic results
+        try:
+            await page.wait_for_selector(
+                "div[data-view-name*='result'], li.reusable-search__result-container, div.entity-result, a[href*='/in/']",
+                timeout=10000
+            )
+        except Exception:
+            pass
+
+        # Scroll down in stages to populate search cards
+        for scroll_y in [300, 700, 1100]:
+            try:
+                await page.evaluate(f"window.scrollBy({{ top: {scroll_y}, behavior: 'smooth' }})")
+                await asyncio.sleep(0.5)
+            except Exception:
+                pass
+
+        # Query all card containers
         cards = await page.query_selector_all(
-            "ul.reusable-search__entity-result-list > li, li.reusable-search__result-container, div.entity-result, div[data-chameleon-result-urn], div.artdeco-entity-lockup"
+            "div[data-view-name*='result'], li.reusable-search__result-container, "
+            "ul.reusable-search__entity-result-list > li, div.entity-result, "
+            "div.scaffold-layout__list-item, div[data-chameleon-result-urn]"
         )
         logger.info("Found %d candidate card elements in DOM", len(cards))
 
-        for idx, card in enumerate(cards[:max_results]):
+        seen_urls = set()
+        for idx, card in enumerate(cards):
+            if len(candidates) >= max_results:
+                break
             try:
-                # Name & URL
-                title_elem = await card.query_selector(
-                    "span[aria-hidden='true'], .entity-result__title-text a, a.app-aware-link, h3 a"
-                )
-                name = (await title_elem.inner_text()).strip() if title_elem else f"Candidate #{idx+1}"
-
-                # Clean name: remove "LinkedIn Member" or badges
-                name = re.sub(r"\s+", " ", name).split("\n")[0].strip()
-
+                # Find profile URL
                 link_elem = await card.query_selector("a[href*='/in/']")
-                href = await link_elem.get_attribute("href") if link_elem else f"https://www.linkedin.com/in/candidate-{idx+1}"
-                canonical_url = href.split("?")[0] if href else f"https://www.linkedin.com/in/candidate-{idx+1}"
+                if not link_elem:
+                    continue
+                href = await link_elem.get_attribute("href")
+                if not href or "/in/" not in href:
+                    continue
+                canonical_url = href.split("?")[0].rstrip("/")
+                if canonical_url in seen_urls:
+                    continue
+                seen_urls.add(canonical_url)
 
-                # Headline / Current Role
-                sub_elem = await card.query_selector(
-                    ".entity-result__primary-subtitle, .subline-level-1, .artdeco-entity-lockup__subtitle"
+                # Name
+                name_elem = await card.query_selector(
+                    "span[aria-hidden='true'], .entity-result__title-text a, a.app-aware-link, h3, .t-16.t-black"
                 )
-                headline = (await sub_elem.inner_text()).strip() if sub_elem else "Software Engineer"
+                name = (await name_elem.inner_text()).strip() if name_elem else f"Candidate #{len(candidates)+1}"
+                name = re.sub(r"\s+", " ", name).split("\n")[0].strip()
+                # Clean badges like "1st", "2nd", "View profile"
+                name = re.sub(r"\b(1st|2nd|3rd|View profile)\b", "", name, flags=re.IGNORECASE).strip()
+                if not name or name.lower() in ("linkedin member", "view profile"):
+                    name = f"LinkedIn Candidate #{len(candidates)+1}"
+
+                # Headline
+                sub_elem = await card.query_selector(
+                    ".entity-result__primary-subtitle, .subline-level-1, .artdeco-entity-lockup__subtitle, div.t-14.t-black"
+                )
+                headline = (await sub_elem.inner_text()).strip() if sub_elem else "Software Professional"
+                headline = re.sub(r"\s+", " ", headline).strip()
 
                 # Location
                 loc_elem = await card.query_selector(
-                    ".entity-result__secondary-subtitle, .subline-level-2, .artdeco-entity-lockup__caption"
+                    ".entity-result__secondary-subtitle, .subline-level-2, .artdeco-entity-lockup__caption, div.t-12.t-black--light"
                 )
                 location = (await loc_elem.inner_text()).strip() if loc_elem else "Location not specified"
+                location = re.sub(r"\s+", " ", location).strip()
 
-                # Summary / Snippet / Current
-                snippet_elem = await card.query_selector(".entity-result__summary, p.entity-result__summary")
+                # Summary / Snippet
+                snippet_elem = await card.query_selector(".entity-result__summary, p.entity-result__summary, p.t-12")
                 snippet = (await snippet_elem.inner_text()).strip() if snippet_elem else f"{name} - {headline}"
 
-                # Extract company heuristic
                 company = None
                 if " at " in headline:
                     company = headline.split(" at ")[-1].strip()
@@ -826,7 +1100,7 @@ class _LinkedInBrowserEngine:
 
                 ts = int(time.time() * 1000)
                 candidates.append(CandidateProfile(
-                    id=f"cand_{ts}_{idx+1}",
+                    id=f"cand_{ts}_{len(candidates)+1}",
                     name=name,
                     canonical_url=canonical_url,
                     headline=headline,
@@ -837,6 +1111,38 @@ class _LinkedInBrowserEngine:
                 ))
             except Exception as e:
                 logger.debug("Failed to parse card %d: %s", idx, e)
+
+        # Fallback: If no structured cards found, look for all /in/ links directly
+        if not candidates:
+            logger.info("Structured card query returned 0. Falling back to direct profile link scan in DOM...")
+            profile_links = await page.query_selector_all("a[href*='/in/']")
+            for pl in profile_links:
+                if len(candidates) >= max_results:
+                    break
+                try:
+                    href = await pl.get_attribute("href")
+                    if not href or "/in/" not in href or "/in/ACoA" in href:
+                        continue
+                    canonical_url = href.split("?")[0].rstrip("/")
+                    if canonical_url in seen_urls:
+                        continue
+                    seen_urls.add(canonical_url)
+                    text = (await pl.inner_text()).strip()
+                    clean_name = re.sub(r"\s+", " ", text).split("\n")[0].strip()
+                    if not clean_name or len(clean_name) < 2 or clean_name.lower() in ("linkedin member", "view profile", "connect", "message"):
+                        continue
+                    ts = int(time.time() * 1000)
+                    candidates.append(CandidateProfile(
+                        id=f"cand_{ts}_{len(candidates)+1}",
+                        name=clean_name,
+                        canonical_url=canonical_url,
+                        headline="Professional on LinkedIn",
+                        location="Location on Profile",
+                        raw_snippet=f"{clean_name} — Profile found on LinkedIn",
+                        skills=[],
+                    ))
+                except Exception:
+                    pass
 
         return candidates
 
@@ -1844,6 +2150,217 @@ class _LinkedInBrowserEngine:
                 "message": "Authenticated" if is_auth else "LinkedIn login page is open. Please sign in in the browser window.",
             }
 
+    async def is_account_restricted(self, page: Page) -> bool:
+        """Detects if LinkedIn is actively requesting identity verification or account restriction."""
+        try:
+            curr_url = page.url or ""
+            if any(x in curr_url for x in ["checkpoint/challenge", "login-restriction", "identity-verification"]):
+                return True
+            title = await page.title()
+            if any(x in title for x in ["temporarily restricted", "Restriction", "Security Verification"]):
+                return True
+            body_text = await page.evaluate("() => document.body ? document.body.innerText.slice(0, 800) : ''")
+            if any(x in body_text for x in ["temporarily restricted", "verify your identity", "Verification required"]):
+                return True
+        except Exception:
+            pass
+        return False
+
+    async def open_linkedin_tab(self, browser_channel: Optional[str] = "chrome") -> dict:
+        """Opens or focuses a LinkedIn tab in the headed browser.
+        
+        Uses lock to prevent first-launch race condition where Chrome executable
+        detection and Playwright process startup can fail if called concurrently.
+        """
+        async with self._lock:
+            _, page = await self._get_or_create_context(browser_channel=browser_channel)
+
+        li_page = None
+        if self._context:
+            for p in self._context.pages:
+                if "linkedin.com" in (p.url or ""):
+                    li_page = p
+                    break
+
+        if li_page is None:
+            pages = self._context.pages if self._context else []
+            li_page = pages[0] if pages else await self._context.new_page()
+            try:
+                await li_page.goto("https://www.linkedin.com", wait_until="domcontentloaded", timeout=25000)
+            except Exception as e:
+                logger.warning("Error navigating to LinkedIn: %s", e)
+        else:
+            try:
+                curr_url = li_page.url or ""
+                if not curr_url or "about:blank" in curr_url:
+                    await li_page.goto("https://www.linkedin.com", wait_until="domcontentloaded", timeout=25000)
+            except Exception:
+                pass
+
+        try:
+            await li_page.bring_to_front()
+        except Exception:
+            pass
+
+        title = "LinkedIn"
+        try:
+            title = await li_page.title() or "LinkedIn"
+        except Exception:
+            pass
+
+        return {
+            "status": "opened",
+            "screen_title": title,
+            "current_url": li_page.url if li_page else "https://www.linkedin.com",
+            "message": "LinkedIn tab focused in browser. Please sign in manually.",
+        }
+
+    async def verify_linkedin_screen(self, session_id: Optional[str] = None, resume_on_success: bool = False) -> dict:
+        """Inspects all browser tabs to verify if LinkedIn is logged in.
+        
+        This method ONLY checks authentication status. It does NOT automatically
+        resume the sourcing session unless resume_on_success=True.
+        
+        The verification process:
+        1. Finds a LinkedIn tab in the browser context
+        2. Brings it to front and waits for it to load
+        3. Checks cookies, DOM elements, URL patterns, and page title
+        4. Returns structured result with authentication status
+        """
+        if self._context is None:
+            return {
+                "authenticated": False,
+                "status": "browser_not_open",
+                "screen_title": "No Browser Open",
+                "current_url": None,
+                "message": "⚠️ Browser is not open yet. Please click 'Launch Candidate Sourcing' first.",
+            }
+
+        pages = self._context.pages
+        if not pages:
+            return {
+                "authenticated": False,
+                "status": "no_pages",
+                "screen_title": "No Open Tabs",
+                "current_url": None,
+                "message": "⚠️ No browser tabs found. Please open LinkedIn in your browser window.",
+            }
+
+        li_page = None
+        for p in pages:
+            if "linkedin.com" in (p.url or ""):
+                li_page = p
+                break
+
+        if li_page is None:
+            active_p = pages[0]
+            try:
+                title = await active_p.title()
+            except Exception:
+                title = "Unknown"
+            return {
+                "authenticated": False,
+                "status": "no_linkedin_tab",
+                "screen_title": title or "about:blank",
+                "current_url": active_p.url,
+                "message": "⚠️ No LinkedIn tab detected. Please click 'Open LinkedIn ↗' or navigate to https://www.linkedin.com in your browser, sign in, then click 'I\'ve Logged In — Continue'.",
+            }
+
+        try:
+            await li_page.bring_to_front()
+        except Exception:
+            pass
+
+        # Wait briefly for page to stabilize after user interaction
+        try:
+            await li_page.wait_for_load_state("domcontentloaded", timeout=5000)
+        except Exception:
+            pass
+        await asyncio.sleep(0.5)
+
+        title = ""
+        try:
+            title = await li_page.title() or "LinkedIn"
+        except Exception:
+            title = "LinkedIn"
+        url = li_page.url or ""
+
+        if await self.is_account_restricted(li_page):
+            msg = "⚠️ LinkedIn Account Verification Active: LinkedIn is currently requesting identity verification on this account ('Access to your account has been temporarily restricted'). Please complete verification directly on LinkedIn or click 'Switch to Demo'."
+            if session_id:
+                sourcing_tracker.update_session(
+                    session_id,
+                    state="waiting_for_login",
+                    error=msg,
+                    message=msg,
+                )
+            return {
+                "authenticated": False,
+                "status": "restricted",
+                "screen_title": title,
+                "current_url": url,
+                "message": msg,
+            }
+
+        is_auth = await self.is_authenticated_session(li_page)
+
+        # If initial check fails, try reloading the page once — the user may have
+        # just logged in and the page hasn't refreshed yet
+        if not is_auth and "linkedin.com" in url:
+            logger.info("Initial auth check failed. Reloading LinkedIn page and rechecking...")
+            try:
+                await li_page.reload(wait_until="domcontentloaded", timeout=15000)
+                await asyncio.sleep(1.0)
+                is_auth = await self.is_authenticated_session(li_page)
+                if is_auth:
+                    try:
+                        title = await li_page.title() or title
+                    except Exception:
+                        pass
+                    url = li_page.url or url
+            except Exception as reload_err:
+                logger.debug("Reload during verify failed: %s", reload_err)
+
+        if not is_auth:
+            msg = (
+                f"⚠️ Login Verification Failed: The AI Agent inspected the agent browser screen and detected that LinkedIn is not logged in yet (Screen detected: '{title}'). "
+                f"Please ensure you enter your email/password inside the dedicated browser window opened on your desktop (not in your external personal browser). "
+                f"Once you see your LinkedIn home feed, click 'I\'ve Logged In — Continue' again."
+            )
+            if session_id:
+                sourcing_tracker.update_session(
+                    session_id,
+                    state="waiting_for_login",
+                    progress=25,
+                    message=msg,
+                    error=msg,
+                )
+            return {
+                "authenticated": False,
+                "status": "unauthenticated",
+                "screen_title": title,
+                "current_url": url,
+                "message": msg,
+            }
+
+        # Confirmed authenticated!
+        if session_id and resume_on_success:
+            sourcing_tracker.resume_session(session_id)
+            sourcing_tracker.update_session(
+                session_id,
+                state="searching",
+                progress=40,
+                message=f"✅ LinkedIn login verified ({title})! AI Agent taking control of browser UI...",
+                error=None,
+            )
+        return {
+            "authenticated": True,
+            "status": "verified",
+            "screen_title": title,
+            "current_url": url,
+            "message": "✅ LinkedIn login verified! AI Agent taking control...",
+        }
+
     async def close_browser(self):
         """Closes the active Playwright browser context cleanly."""
         if self._context:
@@ -1880,6 +2397,7 @@ class LinkedInBrowserService:
         deep_scrape: bool = True,
         timeout_seconds: int = 45,
         session_id: Optional[str] = None,
+        browser_channel: Optional[str] = "chrome",
     ) -> Tuple[List[CandidateProfile], str, str]:
         return await self._runner.run(
             self._engine.search_linkedin(
@@ -1889,6 +2407,7 @@ class LinkedInBrowserService:
                 deep_scrape=deep_scrape,
                 timeout_seconds=timeout_seconds,
                 session_id=session_id,
+                browser_channel=browser_channel,
             )
         )
 
@@ -1930,8 +2449,15 @@ class LinkedInBrowserService:
     async def open_login_window(self) -> dict:
         return await self._runner.run(self._engine.open_login_window())
 
+    async def open_linkedin_tab(self, browser_channel: Optional[str] = "chrome") -> dict:
+        return await self._runner.run(self._engine.open_linkedin_tab(browser_channel=browser_channel))
+
+    async def verify_linkedin_screen(self, session_id: Optional[str] = None, resume_on_success: bool = False) -> dict:
+        return await self._runner.run(self._engine.verify_linkedin_screen(session_id=session_id, resume_on_success=resume_on_success))
+
     async def close_browser(self):
         return await self._runner.run(self._engine.close_browser())
 
 
 browser_service = LinkedInBrowserService()
+
