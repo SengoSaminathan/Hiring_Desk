@@ -10,7 +10,7 @@ from backend.app.api.health import router as health_router
 from backend.app.api.jobs import router as jobs_router
 from backend.app.api.sourcing import router as sourcing_router
 
-if sys.platform == "win32":
+if sys.platform == "win32" and "pytest" not in sys.modules:
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 logging.basicConfig(
@@ -39,6 +39,14 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(jobs_router)
 app.include_router(sourcing_router)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Background startup tasks: cloud sync and telemetry setup."""
+    # Startup cloud sync is available on-demand via /api/sourcing/sync-supabase
+    # or the UI toolbar button to avoid blocking offline or test environments.
+    pass
 
 
 @app.get("/")

@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   Search,
   Filter,
+  ChevronLeft,
   ChevronDown,
   ChevronRight,
   MoreVertical,
@@ -52,6 +53,11 @@ import {
   Info,
   Shield,
   AlertTriangle,
+  Upload,
+  GraduationCap,
+  Cloud,
+  Trash2,
+  Building2,
 } from "lucide-react";
 
 // Inline brand SVGs for pixel-perfect social icons
@@ -136,108 +142,166 @@ function Sparkline({ color = "purple", data = [4, 7, 5, 8, 12, 9, 14, 18] }) {
   );
 }
 
-// Sample Job Descriptions
-const SAMPLE_JDS = {
-  ai_lead: {
-    id: "ai_lead",
-    title: "Senior AI Engineer",
-    department: "Engineering",
-    type: "Full-time",
-    experience: "5+ years",
-    location: "Remote / Hybrid",
-    region: "UAE / India",
-    requirements: [
-      "React.js",
-      "JavaScript",
-      "Next.js",
-      "REST APIs",
-      "API Integration",
-      "System Design",
-      "5+ Years Exp",
-      "AI / LLMs",
-      "Problem Solving",
-    ],
-    text: `Job Title: Senior AI Engineer
-Location: Remote / Hybrid (UAE / India)
-Experience: 5+ years
+// Clean and sanitize candidate headline by stripping connection noise, prefixes, and followers
+function sanitizeCandidateHeadline(headline, candidateName = "") {
+  if (!headline || typeof headline !== "string") return "";
+  let clean = headline;
+  clean = clean.replace(/\b\d+[\d,]*\+?\s*(connections?|followers?)\b/gi, "");
+  clean = clean.replace(/\b(1st|2nd|3rd|\d+th)(\+)?\s*(degree(\s*connection)?)?\b/gi, "");
+  clean = clean.replace(/\b(view profile|connect|message|follow|pending)\b/gi, "");
+  clean = clean.replace(/\b(current|past|present)\s*:\s*/gi, "");
+  clean = clean.replace(/^[\s\.\•\·\-\–\—\:\,\;\|]+/g, "");
+  clean = clean.replace(/[\s\.\•\·\-\–\—\:\,\;\|]+$/g, "");
+  clean = clean.replace(/\s*([•·|])\s*([•·|]\s*)*/g, " • ");
+  clean = clean.replace(/\s{2,}/g, " ").trim();
 
-About the Role:
-We are seeking an experienced Senior AI Engineer to architect autonomous agent pipelines, web intelligence workflows, and resilient LLM integrations. You will work with Next.js, Python FastAPI, Playwright, and local Gemini AI agents.
+  if (candidateName) {
+    const cName = candidateName.trim().toLowerCase();
+    if (clean.toLowerCase().startsWith(cName)) {
+      clean = clean.slice(cName.length).replace(/^[\s\.\•\·\-\–\—\:\,\;\|]+/, "").trim();
+    }
+  }
+  return clean;
+}
 
-Key Requirements:
-- 5+ years of software engineering experience with strong proficiency in Python and JavaScript/TypeScript.
-- Hands-on experience building AI/LLM orchestration agents, prompt chaining, and evaluation benchmarks.
-- Proven experience with browser automation (Playwright/Selenium) and web scraping pipelines.
-- Familiarity with Next.js, React, REST API integration, and real-time frontend telemetry.
-- Strong grounding in system design, data privacy guardrails, and self-healing agent architectures.`,
-  },
-  frontend: {
-    id: "frontend",
-    title: "Senior Frontend Engineer",
-    department: "Engineering",
-    type: "Full-time",
-    experience: "5+ years",
-    location: "Remote",
-    region: "US / India",
-    requirements: [
-      "JavaScript",
-      "React (Hooks, Context)",
-      "Next.js App Router",
-      "Tailwind CSS",
-      "State Management",
-      "REST APIs",
-      "WebSockets / SSE",
-      "60fps Animations",
-    ],
-    text: `Job Title: Senior Frontend Engineer
-Location: Remote (US / India)
-Experience: 5+ years
+// Format candidate location cleanly with Title Casing and recognized regional acronyms
+function formatCandidateLocation(loc) {
+  if (!loc || typeof loc !== "string") return "";
+  const cleaned = loc.replace(/\b(location on profile|location)\b/gi, "").trim();
+  if (!cleaned) return "";
+  const upperTokens = new Set(["uae", "usa", "uk", "us", "eu", "apac", "emea", "ca", "ny", "tx", "wa", "sf", "in", "it"]);
+  const parts = cleaned
+    .split(",")
+    .map((part) => {
+      const words = part
+        .trim()
+        .split(/\s+/)
+        .map((word) => {
+          const cleanWord = word.replace(/[^a-zA-Z]/g, "").toLowerCase();
+          if (upperTokens.has(cleanWord)) {
+            return word.toUpperCase();
+          }
+          if (!word) return "";
+          return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+        })
+        .filter(Boolean);
+      return words.join(" ");
+    })
+    .filter(Boolean);
 
-About the Role:
-We are seeking an experienced Senior Frontend Engineer to build high-performance, real-time recruiting applications. You will work with React, Next.js, and modern CSS frameworks, collaborating closely with backend and AI engineers.
+  return parts.join(", ");
+}
 
-Responsibilities:
-- Build responsive, accessible, and performant user interfaces using React and Next.js.
-- Implement real-time telemetry feeds (WebSockets / SSE) for long-running AI tasks.
-- Optimize web applications for latency, memory, and smooth 60fps animations.
-- Mentor junior engineers and champion code quality.
+// Extract or sanitize company name cleanly
+function getCandidateCompany(candidate, sanitizedHeadline = "") {
+  if (!candidate) return "";
+  const direct = candidate.company || candidate.current_company;
+  if (direct && typeof direct === "string" && !direct.toLowerCase().includes("technology co.") && !direct.toLowerCase().includes("location on profile")) {
+    return direct.trim();
+  }
+  const headline = sanitizedHeadline || candidate.headline || "";
+  if (headline && typeof headline === "string" && headline.includes(" at ")) {
+    const afterAt = headline.split(" at ")[1]?.split(/[•·|,]/)[0]?.trim();
+    if (afterAt && afterAt.length > 1 && !afterAt.toLowerCase().includes("connections")) {
+      return afterAt;
+    }
+  }
+  return "";
+}
 
-Requirements:
-- 5+ years of production experience in frontend engineering.
-- Deep expertise in JavaScript, React (Hooks, Context, Concurrent Mode), and Next.js.
-- Strong proficiency in modern Tailwind CSS and state management.
-- Experience consuming REST APIs and handling error/recovery states.
-- Passion for crafting polished, premium user experiences.`,
-  },
-  fullstack: {
-    id: "fullstack",
-    title: "Lead Fullstack Developer",
-    department: "Product",
-    type: "Full-time",
-    experience: "6+ years",
-    location: "Hybrid",
-    region: "Bengaluru, India",
-    requirements: [
-      "React",
-      "Node.js",
-      "FastAPI",
-      "PostgreSQL",
-      "Playwright",
-      "Tailwind CSS",
-      "Distributed Systems",
-    ],
-    text: `Job Title: Lead Fullstack Developer
-Location: Hybrid (Bengaluru, India)
-Experience: 6+ years
+// Interactive Tag Input Field for Dynamic Skills and Preferences
+function TagInputField({ label, tags = [], onAdd, onRemove, placeholder = "Type and press enter..." }) {
+  const [inputVal, setInputVal] = useState("");
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      if (inputVal.trim()) {
+        onAdd(inputVal.trim());
+        setInputVal("");
+      }
+    }
+  };
+  return (
+    <div className="space-y-1.5">
+      {label && <label className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">{label}</label>}
+      <div className="flex flex-wrap gap-1.5 p-2 rounded-xl bg-slate-50 dark:bg-[#0c1224] border border-slate-200/80 dark:border-[#1d2946] min-h-[42px] items-center focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/20 transition-all">
+        {tags.map((tag, idx) => (
+          <span
+            key={idx}
+            className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"
+          >
+            <span>{tag}</span>
+            <button
+              type="button"
+              onClick={() => onRemove(idx)}
+              className="hover:text-rose-600 transition-colors text-slate-400 font-bold ml-0.5"
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        <input
+          type="text"
+          value={inputVal}
+          onChange={(e) => setInputVal(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={tags.length === 0 ? placeholder : "+ Add another..."}
+          className="flex-1 bg-transparent text-xs text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none min-w-[120px] px-1 py-0.5"
+        />
+        {inputVal.trim() && (
+          <button
+            type="button"
+            onClick={() => { onAdd(inputVal.trim()); setInputVal(""); }}
+            className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 px-2.5 py-1 rounded-lg bg-indigo-100/70 dark:bg-indigo-950/80 hover:bg-indigo-200"
+          >
+            Add
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 
-About the Role:
-We need a Lead Fullstack Developer to bridge our local-first AI backends with ultra-responsive desktop-class React frontends.
+// Initial dynamic structured job requirements form
+const INITIAL_JOB_FORM = {
+  // A. Job Information
+  jobTitle: "",
+  jobDescription: "",
+  department: "Engineering",
+  employmentType: "Full-time",
+  seniorityLevel: "Senior",
+  vacancies: 1,
 
-Requirements:
-- 6+ years building full-stack web platforms using React and Python / Node.js.
-- Deep architectural experience with PostgreSQL, SQLite, and caching systems.
-- Familiarity with Playwright browser drivers, desktop packaging, and asynchronous job schedulers.`,
-  },
+  // B. Required Skills & Technologies
+  mandatorySkills: [],
+  preferredSkills: [],
+  technologies: [],
+  toolsPlatforms: [],
+  domainExpertise: [],
+  certifications: [],
+
+  // C. Experience Requirements
+  minExperience: 3,
+  maxExperience: 8,
+  relevantExperience: "",
+  leadershipExperience: "",
+
+  // D. Location Requirements
+  country: "",
+  stateRegion: "",
+  city: "",
+  preferredLocations: [],
+  workMode: "Remote",
+  willingnessToRelocate: false,
+
+  // E. Additional Hiring Preferences
+  salaryRange: "",
+  noticePeriod: "30 Days",
+  educationRequirements: "",
+  preferredIndustries: [],
+  companiesToTarget: [],
+  companiesToExclude: [],
+  additionalInstructions: "",
 };
 
 // Curated verified avatars for guaranteed reliable image rendering (no 404s)
@@ -252,197 +316,6 @@ const VERIFIED_AVATARS = [
   "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=120&auto=format&fit=crop&q=80",
 ];
 
-// Initial Candidate Pool
-const INITIAL_CANDIDATES = [
-  {
-    id: "cand_aarav",
-    name: "Aarav Mehta",
-    avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80",
-    location: "Bengaluru, India",
-    title: "Senior Software Engineer",
-    company: "Google",
-    headline: "Senior Software Engineer at Google | React, Next.js, Distributed Agent Systems",
-    canonical_url: "https://www.linkedin.com/in/aarav-mehta",
-    skill_match: 92,
-    evidence_status: "Verified",
-    sources: ["linkedin", "github"],
-    status: "New",
-    selected: false,
-    experience_years: 6.5,
-    match_level: "High",
-    stored_in_db: true,
-    about: "Senior Frontend & Distributed Systems Engineer with 6+ years experience architecting mission-critical web applications at Google. Passionate about AI agents, Next.js performance, and deterministic UI state management.",
-    skills: ["React", "Next.js", "JavaScript", "TypeScript", "REST APIs", "System Design", "WebSockets"],
-    experience_history: [
-      {
-        company: "Google",
-        role: "Senior Software Engineer",
-        dates: "2021 — Present (3.5 yrs)",
-        description: "Led team of 8 frontend engineers rebuilding Google Cloud Console microfrontends with Next.js, cutting p95 load latency by 42%."
-      },
-      {
-        company: "Razorpay",
-        role: "Frontend Engineer II",
-        dates: "2018 — 2021 (3.0 yrs)",
-        description: "Built developer dashboard and webhook telemetry inspection tools handling 15M+ daily requests."
-      }
-    ],
-    justification: "Proven track record at Google leading performant frontend applications with Next.js and real-time distributed telemetry.",
-    evidence_quotes: [
-      { requirement: "React & Next.js", quote: "Architected core Google Cloud Console microfrontends with Next.js and React Hooks.", confidence: 0.95 },
-      { requirement: "5+ Years Experience", quote: "6+ years production software engineering across scalable web applications.", confidence: 0.98 },
-      { requirement: "REST & API Handling", quote: "Integrated high-throughput REST and gRPC endpoints with robust client-side retry loops.", confidence: 0.91 }
-    ],
-    missing_skills: ["Ollama local adapter"],
-  },
-  {
-    id: "cand_priya",
-    name: "Priya Sharma",
-    avatar: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=120&auto=format&fit=crop&q=80",
-    location: "Dubai, UAE",
-    title: "AI Engineer",
-    company: "Microsoft",
-    headline: "AI Engineer at Microsoft | Agent State Machines, Playwright Automation & LLM Prompting",
-    canonical_url: "https://www.linkedin.com/in/priya-sharma-ai",
-    skill_match: 88,
-    evidence_status: "Verified",
-    sources: ["linkedin", "github"],
-    status: "In Review",
-    selected: false,
-    experience_years: 5.5,
-    match_level: "High",
-    stored_in_db: true,
-    about: "AI and Automation Specialist focused on building reliable autonomous browser agents, tool-calling pipelines, and synthetic evaluation frameworks.",
-    skills: ["Python", "FastAPI", "Playwright", "LLMs", "LangChain", "Autonomous Agents", "React"],
-    experience_history: [
-      {
-        company: "Microsoft",
-        role: "AI Engineer",
-        dates: "2022 — Present (2.5 yrs)",
-        description: "Engineered automated benchmark evaluation pipelines for Copilot agent models with structured JSON schema constraints."
-      },
-      {
-        company: "Noon",
-        role: "Automation Engineer",
-        dates: "2019 — 2022 (3.0 yrs)",
-        description: "Created headless and headed browser automation frameworks with Playwright for price parity auditing."
-      }
-    ],
-    justification: "Strong engineering background at Microsoft specializing in LLM tool calling, autonomous agent recovery, and browser testing.",
-    evidence_quotes: [
-      { requirement: "AI / LLM Orchestration", quote: "Developed automated evaluation pipelines for Copilot agent models with structured JSON constraints.", confidence: 0.94 },
-      { requirement: "Playwright Automation", quote: "Built automated browser test runners with persistent sessions and headless fallback.", confidence: 0.92 }
-    ],
-    missing_skills: ["Tailwind CSS v4"],
-  },
-  {
-    id: "cand_daniel",
-    name: "Daniel Kim",
-    avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=120&auto=format&fit=crop&q=80",
-    location: "Singapore",
-    title: "Software Engineer",
-    company: "Amazon",
-    headline: "Software Engineer at Amazon Web Services | Fullstack React, Python & Cloud Infrastructure",
-    canonical_url: "https://www.linkedin.com/in/daniel-kim-sg",
-    skill_match: 85,
-    evidence_status: "Partial",
-    sources: ["linkedin", "github"],
-    status: "In Review",
-    selected: false,
-    experience_years: 5.0,
-    match_level: "Medium",
-    stored_in_db: true,
-    about: "Fullstack software engineer with deep expertise across AWS, FastAPI, React, and real-time event streaming systems.",
-    skills: ["React", "Python", "FastAPI", "AWS", "Docker", "PostgreSQL", "REST APIs"],
-    experience_history: [
-      {
-        company: "Amazon Web Services",
-        role: "Software Development Engineer II",
-        dates: "2021 — Present (3.0 yrs)",
-        description: "Designed resilient microservices in Python handling 50k requests/minute for AWS billing portal."
-      },
-      {
-        company: "Grab",
-        role: "Fullstack Developer",
-        dates: "2019 — 2021 (2.0 yrs)",
-        description: "Built merchant-facing React monitoring dashboards with WebSocket live streaming."
-      }
-    ],
-    justification: "Solid fullstack foundation with React and Python APIs. Partial evidence for custom browser automation pipelines.",
-    evidence_quotes: [
-      { requirement: "Python & REST APIs", quote: "Designed resilient microservices in Python handling 50k requests/minute.", confidence: 0.89 },
-      { requirement: "React & JavaScript", quote: "Built internal monitoring dashboards using React and TypeScript.", confidence: 0.86 }
-    ],
-    missing_skills: ["Playwright browser driver", "Autonomous agent recovery"],
-  },
-  {
-    id: "cand_fatima",
-    name: "Fatima Al Mansoori",
-    avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=120&auto=format&fit=crop&q=80",
-    location: "Abu Dhabi, UAE",
-    title: "Frontend Engineer",
-    company: "Careem",
-    headline: "Frontend Engineer at Careem | Next.js, Design Systems & High-Concurrency Telemetry",
-    canonical_url: "https://www.linkedin.com/in/fatima-almansoori",
-    skill_match: 78,
-    evidence_status: "Verified",
-    sources: ["linkedin"],
-    status: "Shortlisted",
-    selected: false,
-    experience_years: 4.5,
-    match_level: "Medium",
-    stored_in_db: true,
-    about: "Frontend engineer passionate about design systems, accessible UX, and building responsive Next.js apps with Tailwind CSS.",
-    skills: ["Next.js", "React", "Tailwind CSS", "JavaScript", "Design Systems", "Figma to Code"],
-    experience_history: [
-      {
-        company: "Careem",
-        role: "Frontend Engineer",
-        dates: "2021 — Present (3.2 yrs)",
-        description: "Maintained design system across web apps serving 10M+ users across the MENA region with zero regression."
-      }
-    ],
-    justification: "Superb UI/UX craftsmanship with Next.js and Tailwind CSS. Slightly shy of the 5-year requirement but excellent technical score.",
-    evidence_quotes: [
-      { requirement: "Next.js & Tailwind CSS", quote: "Maintained design system across web apps serving 10M+ users across the MENA region.", confidence: 0.96 }
-    ],
-    missing_skills: ["Playwright Headed Automation"],
-  },
-  {
-    id: "cand_rohit",
-    name: "Rohit Verma",
-    avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=120&auto=format&fit=crop&q=80",
-    location: "Gurgaon, India",
-    title: "Full Stack Engineer",
-    company: "Flipkart",
-    headline: "Full Stack Engineer at Flipkart | Python, FastApi, WebSockets & Realtime Feeds",
-    canonical_url: "https://www.linkedin.com/in/rohit-verma-flipkart",
-    skill_match: 74,
-    evidence_status: "Not Verified",
-    sources: ["linkedin", "github"],
-    status: "New",
-    selected: false,
-    experience_years: 5.2,
-    match_level: "Medium",
-    stored_in_db: true,
-    about: "Backend and fullstack developer focused on high-throughput asynchronous services, Python FastAPI, WebSockets, and database indexing.",
-    skills: ["Python", "FastAPI", "WebSockets", "SQL", "Redis", "Docker", "JavaScript"],
-    experience_history: [
-      {
-        company: "Flipkart",
-        role: "Full Stack Engineer",
-        dates: "2021 — Present (3.5 yrs)",
-        description: "Built real-time order tracking backend with FastAPI and WebSockets handling flash-sale traffic spikes."
-      }
-    ],
-    justification: "Backend strength with FastAPI and asynchronous workers. Less direct experience with Next.js App Router.",
-    evidence_quotes: [
-      { requirement: "Python & FastAPI", quote: "Built real-time order tracking backend with FastAPI and WebSockets.", confidence: 0.90 }
-    ],
-    missing_skills: ["Next.js App Router", "Tailwind CSS"],
-  },
-];
-
 export default function Home() {
   // Theme state: defaults to light (as per the user's uploaded reference image)
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -450,37 +323,135 @@ export default function Home() {
   // Navigation & View state
   const [activeNav, setActiveNav] = useState("overview");
 
-  // Role & Sourcing state
-  const [selectedRolePreset, setSelectedRolePreset] = useState("ai_lead");
-  const [currentRole, setCurrentRole] = useState(SAMPLE_JDS.ai_lead);
-  const [rawJd, setRawJd] = useState(SAMPLE_JDS.ai_lead.text);
-  const [searchMode, setSearchMode] = useState("autonomous");
-  const [browserChannel, setBrowserChannel] = useState("chrome");
-  const [maxResults, setMaxResults] = useState(6);
+  // Dynamic 3-Step Sourcing Wizard State
+  const [isWizardOpen, setIsWizardOpen] = useState(false);
+  const [wizardStep, setWizardStep] = useState(1); // 1: Requirements, 2: AI Queries, 3: Execution & Automation
+  const [activeOptionTab, setActiveOptionTab] = useState("manual"); // "manual" | "upload"
+  const [jobRequirements, setJobRequirements] = useState(INITIAL_JOB_FORM);
+  const [step1ValidationError, setStep1ValidationError] = useState("");
+  const [draftSavedToast, setDraftSavedToast] = useState(false);
+
+  // Document Upload State
+  const [uploadedFile, setUploadedFile] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadingJd, setUploadingJd] = useState(false);
+
+  // Search Mode & Browser/Account Execution State
+  const [searchMode, setSearchMode] = useState("autonomous"); // "autonomous" | "live"
+  const [browserChannel, setBrowserChannel] = useState("chrome"); // "chrome" | "msedge" | "chromium"
+  const [maxResults, setMaxResults] = useState(10);
+  const [availableAccounts, setAvailableAccounts] = useState([]);
+  const [selectedAccountId, setSelectedAccountId] = useState("acc_chrome");
   const [aiSearchPrompt, setAiSearchPrompt] = useState("");
 
+  // 3 Strategic Queries Formulation & Review State
+  const [strategicQueries, setStrategicQueries] = useState([]);
+  const [selectedQueryId, setSelectedQueryId] = useState("precision");
+  const [editingQueryId, setEditingQueryId] = useState(null);
+  const [editedQueryText, setEditedQueryText] = useState("");
+  const [generatingQueries, setGeneratingQueries] = useState(false);
+  const [regeneratingQueryId, setRegeneratingQueryId] = useState(null);
+
   // Modals & Handover Gates
-  const [isSourcingModalOpen, setIsSourcingModalOpen] = useState(false);
-  const [isJdEditorOpen, setIsJdEditorOpen] = useState(false);
   const [selectedCandidate, setSelectedCandidate] = useState(null);
+  const scoreScrollRef = useRef(null);
+  const scoreSectionRef = useRef(null);
+  const [canScrollCategoriesLeft, setCanScrollCategoriesLeft] = useState(false);
+  const [canScrollCategoriesRight, setCanScrollCategoriesRight] = useState(true);
+
+  const selectedCleanName = useMemo(() => {
+    if (!selectedCandidate) return "";
+    return selectedCandidate.name?.split(/[•·]/)[0]?.replace(/\b(1st\+?|2nd\+?|3rd\+?|view profile|connect|message)\b/gi, '')?.trim() || selectedCandidate.name || "Candidate";
+  }, [selectedCandidate]);
+
+  const selectedCleanHeadline = useMemo(() => {
+    if (!selectedCandidate) return "";
+    return sanitizeCandidateHeadline(selectedCandidate.headline, selectedCleanName);
+  }, [selectedCandidate, selectedCleanName]);
+
+  const selectedCandidateCompany = useMemo(() => {
+    if (!selectedCandidate) return "";
+    return getCandidateCompany(selectedCandidate, selectedCleanHeadline);
+  }, [selectedCandidate, selectedCleanHeadline]);
+
+  const selectedFormattedLocation = useMemo(() => {
+    if (!selectedCandidate) return "";
+    return formatCandidateLocation(selectedCandidate.current_location || selectedCandidate.location);
+  }, [selectedCandidate]);
+
+  const updateScrollButtons = useCallback(() => {
+    if (scoreScrollRef.current) {
+      const { scrollLeft, scrollWidth, clientWidth } = scoreScrollRef.current;
+      setCanScrollCategoriesLeft(scrollLeft > 4);
+      setCanScrollCategoriesRight(scrollLeft + clientWidth < scrollWidth - 6);
+    }
+  }, []);
+
+  const scrollScoreCategories = (direction) => {
+    if (scoreScrollRef.current) {
+      const cardStep = 190;
+      const scrollAmount = direction === "left" ? -cardStep : cardStep;
+      scoreScrollRef.current.scrollBy({ left: scrollAmount, behavior: "smooth" });
+      setTimeout(updateScrollButtons, 150);
+    }
+  };
+
+  const handleScoreWheel = useCallback((e) => {
+    const container = scoreScrollRef.current;
+    if (!container) return;
+
+    // Allow native horizontal swipe
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+
+    if (e.deltaY !== 0) {
+      const canLeft = container.scrollLeft > 2;
+      const canRight = container.scrollLeft + container.clientWidth < container.scrollWidth - 6;
+
+      if ((e.deltaY < 0 && canLeft) || (e.deltaY > 0 && canRight)) {
+        e.preventDefault();
+        e.stopPropagation();
+        const step = e.deltaY > 0 ? 190 : -190;
+        container.scrollBy({ left: step, behavior: "smooth" });
+        setTimeout(updateScrollButtons, 120);
+      }
+    }
+  }, [updateScrollButtons]);
+
+  useEffect(() => {
+    const node = scoreSectionRef.current || scoreScrollRef.current;
+    if (!node) return;
+    node.addEventListener("wheel", handleScoreWheel, { passive: false });
+    return () => {
+      node.removeEventListener("wheel", handleScoreWheel);
+    };
+  }, [handleScoreWheel, selectedCandidate?.id]);
+
+  useEffect(() => {
+    if (selectedCandidate && scoreScrollRef.current) {
+      scoreScrollRef.current.scrollLeft = 0;
+      updateScrollButtons();
+    }
+  }, [selectedCandidate?.id, updateScrollButtons]);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authStatusMessage, setAuthStatusMessage] = useState("");
-  const [isPostJdPromptOpen, setIsPostJdPromptOpen] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(false);
   const [isLinkedInLoggedIn, setIsLinkedInLoggedIn] = useState(false);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [reportData, setReportData] = useState(null);
   const [loadingReport, setLoadingReport] = useState(false);
 
-  // Candidate Data & Filters
-  const [candidateList, setCandidateList] = useState(INITIAL_CANDIDATES);
+  // Candidate Data & Filters (completely empty initial state)
+  const [candidateList, setCandidateList] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState("all");
   const [selectAll, setSelectAll] = useState(false);
 
-  // Pipeline execution & telemetry
+  // Pipeline execution & telemetry (completely empty initial logs)
   const [analyzing, setAnalyzing] = useState(false);
   const [sourcing, setSourcing] = useState(false);
+  const [evaluatingCandidateId, setEvaluatingCandidateId] = useState(null);
+  const [batchEvaluating, setBatchEvaluating] = useState(false);
+  const [syncingSupabase, setSyncingSupabase] = useState(false);
   const [sourcingStage, setSourcingStage] = useState("");
   const [activeSessionId, setActiveSessionId] = useState(null);
   const [sessionState, setSessionState] = useState("idle");
@@ -491,20 +462,28 @@ export default function Home() {
   const [isVerifyingScreen, setIsVerifyingScreen] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
   const [error, setError] = useState(null);
-  const [pipelineStep, setPipelineStep] = useState(3);
-  const [logs, setLogs] = useState([
-    { time: "2m ago", icon: "search", text: "Collected 25 profiles from LinkedIn search" },
-    { time: "5m ago", icon: "file", text: "Extracted profile details (25/25)" },
-    { time: "8m ago", icon: "shield", text: "Verified skills and experience using local AI" },
-    { time: "12m ago", icon: "search", text: 'New search query executed "Senior AI Engineer React Next.js"' },
-    { time: "14m ago", icon: "search", text: "Found 48 new profiles from GitHub and LinkedIn" },
-    { time: "18m ago", icon: "code", text: 'Moving to next search query "AI Engineer API integration"' },
-  ]);
+  const [pipelineStep, setPipelineStep] = useState(1);
+  const [logs, setLogs] = useState([]);
+  const [executionStats, setExecutionStats] = useState({
+    discovered: 0,
+    extracted: 0,
+    evaluated: 0,
+    saved: 0,
+    duplicates: 0,
+    durationSeconds: 0,
+    startTime: null,
+  });
 
   const addTelemetryLog = (msg, icon = "search") => {
-    const time = "Just now";
-    setLogs((prev) => [{ time, icon, text: msg }, ...prev.slice(0, 20)]);
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    setLogs((prev) => [{ time, icon, text: msg }, ...prev.slice(0, 40)]);
   };
+
+  // Multi-Role & Saved Jobs
+  const [savedJobs, setSavedJobs] = useState([]);
+  const [selectedRoleFilter, setSelectedRoleFilter] = useState("All");
+  const [evalTargetRole, setEvalTargetRole] = useState("");
+  const [isRoleDropdownOpen, setIsRoleDropdownOpen] = useState(false);
 
   // Backend Health & Dynamic Host URL
   const [apiBase, setApiBase] = useState("http://127.0.0.1:8001");
@@ -532,49 +511,139 @@ export default function Home() {
     }
   }, [apiBase]);
 
+  const fetchSavedJobs = useCallback(async (targetBase) => {
+    const url = targetBase || apiBase;
+    try {
+      const res = await fetch(`${url}/api/jobs`, { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.jobs && data.jobs.length > 0) {
+          setSavedJobs(data.jobs);
+          setJobRequirements((prev) => {
+            if (prev.jobTitle) return prev;
+            const topJob = data.jobs[0];
+            const locTokens = topJob.location ? topJob.location.split(",").map((s) => s.trim()) : [];
+            const activeCity = topJob.city || (locTokens.length > 0 ? locTokens[0] : "");
+            const activeState = topJob.state_region || (locTokens.length > 1 ? locTokens[1] : "");
+            const activeCountry = topJob.country || (locTokens.length > 2 ? locTokens[2] : "");
+            const computedLoc = [activeCity, activeState, activeCountry].filter(Boolean).join(", ") || topJob.location || "Flexible / Remote";
+            const computedPref = topJob.preferred_locations && topJob.preferred_locations.length > 0
+              ? topJob.preferred_locations
+              : [activeCity, activeState, activeCountry].filter(Boolean);
+
+            return {
+              ...prev,
+              jobTitle: topJob.job_title,
+              department: topJob.department || "Engineering",
+              seniorityLevel: topJob.seniority_level || "Senior",
+              minExperience: topJob.min_years_experience || 5,
+              mandatorySkills: topJob.mandatory_skills || [],
+              preferredSkills: topJob.preferred_skills || [],
+              technologies: topJob.technologies || [],
+              city: activeCity,
+              stateRegion: activeState,
+              country: activeCountry,
+              location: computedLoc,
+              preferredLocations: computedPref,
+              jobDescription: topJob.raw_jd || "",
+            };
+          });
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [apiBase]);
+
+  const handleSelectActiveRole = (job) => {
+    const locTokens = job.location ? job.location.split(",").map((s) => s.trim()) : [];
+    const activeCity = job.city || (locTokens.length > 0 ? locTokens[0] : "");
+    const activeState = job.state_region || (locTokens.length > 1 ? locTokens[1] : "");
+    const activeCountry = job.country || (locTokens.length > 2 ? locTokens[2] : "");
+    const computedLoc = [activeCity, activeState, activeCountry].filter(Boolean).join(", ") || job.location || "Flexible / Remote";
+    const computedPref = job.preferred_locations && job.preferred_locations.length > 0
+      ? job.preferred_locations
+      : [activeCity, activeState, activeCountry].filter(Boolean);
+
+    setJobRequirements({
+      jobTitle: job.job_title,
+      department: job.department || "Engineering",
+      seniorityLevel: job.seniority_level || "Senior",
+      minExperience: job.min_years_experience || 5,
+      maxExperience: job.max_years_experience || 12,
+      mandatorySkills: job.mandatory_skills || [],
+      preferredSkills: job.preferred_skills || [],
+      technologies: job.technologies || [],
+      city: activeCity,
+      stateRegion: activeState,
+      country: activeCountry,
+      location: computedLoc,
+      preferredLocations: computedPref,
+      jobDescription: job.raw_jd || "",
+    });
+    setIsRoleDropdownOpen(false);
+    addTelemetryLog(`Switched active role requisition to: ${job.job_title}`, "file");
+  };
+
   const fetchStoredCandidates = useCallback(async (targetBase) => {
     const url = targetBase || apiBase;
     try {
       const res = await fetch(`${url}/api/sourcing/candidates?limit=50`, { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
-        if (data.candidates && data.candidates.length > 0) {
+        if (Array.isArray(data.candidates)) {
           const loaded = data.candidates.map((c, idx) => {
-            const fit = Math.round(Number(c.fit_score) || 78);
+            const hasEval = c.fit_score !== null && c.fit_score !== undefined;
+            const fit = hasEval ? Math.round(Number(c.fit_score)) : null;
+            const cleanLoc = c.location && !c.location.toLowerCase().includes("location on profile") && !c.location.toLowerCase().includes("technology co.") ? c.location : "";
+            const cleanComp = c.current_company && !c.current_company.toLowerCase().includes("technology co.") ? c.current_company : "";
             return {
               id: c.id || `stored_${idx}`,
-              name: c.name,
+              name: c.name?.split(/[•·]/)[0]?.replace(/\b(1st\+?|2nd\+?|3rd\+?|view profile|connect|message)\b/gi, '')?.trim() || c.name,
               avatar: c.avatar_url || VERIFIED_AVATARS[idx % VERIFIED_AVATARS.length],
-              location: c.location || "Remote",
+              location: cleanLoc || c.location || "",
               title: c.headline?.split(" at ")[0] || "Software Engineer",
-              company: c.current_company || "Technology Co.",
+              company: cleanComp,
               headline: c.headline,
               canonical_url: c.canonical_url,
               skill_match: fit,
-              evidence_status: fit >= 80 ? "Verified" : fit >= 60 ? "Partial" : "Not Verified",
+              evidence_status: fit !== null ? (fit >= 80 ? "Verified" : fit >= 60 ? "Partial" : "Not Verified") : "Pending Review",
               sources: ["linkedin", "github"],
-              status: "New",
+              status: c.status || "New",
               selected: false,
               experience_years: c.experience_years || 5.0,
               about: c.about || "",
               experience_history: c.experience_history || [],
+              education: c.education || [],
+              certifications: c.certifications || [],
+              projects: c.projects || [],
+              recent_activity: c.recent_activity || [],
+              section_scores: c.section_scores || {},
               skills: c.skills || [],
               stored_in_db: true,
-              match_level: c.match_level || "Medium",
-              justification: c.justification || "Candidate profile harvested and stored in local SQLite database.",
+              target_role: c.target_role || c.job_title || "",
+              job_title: c.job_title || c.target_role || "",
+              match_level: hasEval ? (c.match_level || "Medium") : "Unevaluated",
+              justification: c.justification || (hasEval ? "Candidate profile evaluated against job criteria." : "Profile harvested. Ready for evaluation."),
               evidence_quotes: (c.evidence_quotes || []).map((m) => ({
                 requirement: m.criterion_requirement || m.requirement || "Skill",
                 quote: m.verbatim_quote || m.quote || "",
                 confidence: m.confidence || 0.85,
               })),
               missing_skills: c.missing_criteria || [],
+              current_location: c.current_location || cleanLoc || c.location || "",
+              preferred_work_locations: c.preferred_work_locations || [],
+              willingness_to_relocate: c.willingness_to_relocate || "Unknown",
+              work_authorization: c.work_authorization || "",
+              location_compatibility_status: c.location_compatibility_status || "Compatible",
+              location_compatibility_reason: c.location_compatibility_reason || "",
+              domain_relevance: hasEval ? (c.domain_relevance || "Relevant") : "Unevaluated",
+              domain_relevance_notes: c.domain_relevance_notes || "",
+              evaluation_coverage: hasEval ? (c.evaluation_coverage !== undefined ? c.evaluation_coverage : 100) : null,
+              category_evaluations: c.category_evaluations || {},
             };
           });
-          setCandidateList((prev) => {
-            const loadedNames = new Set(loaded.map((c) => c.name.toLowerCase()));
-            const remaining = prev.filter((c) => !loadedNames.has(c.name.toLowerCase()));
-            return [...loaded, ...remaining];
-          });
+          setCandidateList(loaded);
         }
       }
     } catch {
@@ -582,12 +651,30 @@ export default function Home() {
     }
   }, [apiBase]);
 
+  const fetchAvailableAccounts = useCallback(async (targetBase) => {
+    const url = targetBase || apiBase;
+    try {
+      const res = await fetch(`${url}/api/sourcing/accounts`, { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        setAvailableAccounts(data);
+        if (data.length > 0 && !selectedAccountId) {
+          setSelectedAccountId(data[0].id);
+        }
+      }
+    } catch {
+      // fallback
+    }
+  }, [apiBase, selectedAccountId]);
+
   useEffect(() => {
     checkHealth(apiBase);
+    fetchSavedJobs(apiBase);
     fetchStoredCandidates(apiBase);
+    fetchAvailableAccounts(apiBase);
     const timer = setInterval(() => checkHealth(apiBase), 3500);
     return () => clearInterval(timer);
-  }, [checkHealth, fetchStoredCandidates, apiBase]);
+  }, [checkHealth, fetchSavedJobs, fetchStoredCandidates, fetchAvailableAccounts, apiBase]);
 
   // Auth & Browser Helpers
   const handleOpenLoginBrowser = async () => {
@@ -634,7 +721,7 @@ export default function Home() {
     setIsReportModalOpen(true);
     setLoadingReport(true);
     try {
-      addTelemetryLog("Retrieving sourcing report from local SQLite database (hiring_desk.db)...", "shield");
+      addTelemetryLog("Retrieving sourcing report from candidate records...", "shield");
       const [repRes, candRes] = await Promise.all([
         fetch(`${apiBase}/api/sourcing/report`),
         fetch(`${apiBase}/api/sourcing/candidates?limit=50`),
@@ -642,67 +729,389 @@ export default function Home() {
       const rep = await repRes.json();
       const cands = await candRes.json();
       setReportData({ ...rep, all_candidates: cands.candidates || [] });
-      addTelemetryLog(`SQLite DB Report loaded: ${rep.total_candidates_harvested || 0} candidates recorded`, "shield");
+      addTelemetryLog(`Shortlist Report loaded: ${rep.total_candidates_harvested || 0} candidates recorded`, "shield");
     } catch (err) {
       console.error("Report fetch error:", err);
-      addTelemetryLog(`Failed to load SQLite DB report: ${err.message}`, "file");
+      addTelemetryLog(`Failed to load sourcing report: ${err.message}`, "file");
     } finally {
       setLoadingReport(false);
     }
   };
 
-  // Switch Role Preset
-  const handleSelectRolePreset = (key) => {
-    setSelectedRolePreset(key);
-    const role = SAMPLE_JDS[key];
-    if (role) {
-      setCurrentRole(role);
-      setRawJd(role.text);
-      addTelemetryLog(`Switched active hiring profile to "${role.title}"`, "file");
+  // Save Job Requirements Draft to Local Storage
+  const handleSaveDraft = () => {
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("hiring_desk_draft_requirements", JSON.stringify(jobRequirements));
+      }
+      setDraftSavedToast(true);
+      setTimeout(() => setDraftSavedToast(false), 3000);
+      addTelemetryLog(`Draft saved for "${jobRequirements.jobTitle || 'Untitled Position'}"`, "shield");
+    } catch (e) {
+      console.warn("Could not save draft:", e);
     }
   };
 
-  // Analyze Job Description via Gemini
-  const handleAnalyzeJd = async () => {
-    if (!rawJd.trim()) return;
-    setAnalyzing(true);
-    setError(null);
-    addTelemetryLog("Analyzing Job Description with Gemini AI engine...", "file");
+  // Clean helper to launch or reset the 3-Step Wizard for fresh role search
+  const handleOpenWizard = (step = 1) => {
+    if (!sourcing) {
+      setSessionState("idle");
+      setSessionProgress(0);
+      setSourcingStage("");
+      setExecutionStats({
+        discovered: 0,
+        extracted: 0,
+        evaluated: 0,
+        saved: 0,
+        duplicates: 0,
+        durationSeconds: 0,
+      });
+      setSessionError(null);
+      setError(null);
+      setActiveSessionId(null);
+    }
+    setIsWizardOpen(true);
+    setWizardStep(step);
+  };
+
+  // Clear Job Requirements Form
+  const handleClearForm = () => {
+    setJobRequirements(INITIAL_JOB_FORM);
+    setUploadedFile(null);
+    setUploadProgress(0);
+    setStep1ValidationError("");
+    if (!sourcing) {
+      setSessionState("idle");
+      setSessionProgress(0);
+      setSourcingStage("");
+      setExecutionStats({
+        discovered: 0,
+        extracted: 0,
+        evaluated: 0,
+        saved: 0,
+        duplicates: 0,
+        durationSeconds: 0,
+      });
+      setSessionError(null);
+      setError(null);
+      setActiveSessionId(null);
+      setStrategicQueries([]);
+      setSelectedQueryId(1);
+    }
+    addTelemetryLog("Job requirements form reset to clean default.", "file");
+  };
+
+  // Step 1: Upload and Parse JD Document (.pdf, .docx, .doc, .txt)
+  const handleDocumentUpload = async (file) => {
+    if (!file) return;
+    setUploadingJd(true);
+    setUploadProgress(25);
+    setStep1ValidationError("");
+
+    // Fresh upload unlocks a brand new sourcing session, clearing previous execution state
+    if (!sourcing) {
+      setSessionState("idle");
+      setSessionProgress(0);
+      setSourcingStage("");
+      setExecutionStats({
+        discovered: 0,
+        extracted: 0,
+        evaluated: 0,
+        saved: 0,
+        duplicates: 0,
+        durationSeconds: 0,
+      });
+      setSessionError(null);
+      setError(null);
+      setActiveSessionId(null);
+      setStrategicQueries([]);
+      setSelectedQueryId(1);
+    }
+
+    addTelemetryLog(`Uploading and analyzing JD document "${file.name}"...`, "file");
+
+    const formData = new FormData();
+    formData.append("file", file);
 
     try {
-      const res = await fetch(`${apiBase}/api/jobs/analyze`, {
+      setUploadProgress(50);
+      const res = await fetch(`${apiBase}/api/jobs/upload-jd`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ raw_jd: rawJd }),
+        body: formData,
       });
 
-      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || `Server returned ${res.status}`);
+      }
+
+      setUploadProgress(85);
       const data = await res.json();
-      setAnalysisResult(data);
-      setPipelineStep(2);
 
       if (data.criteria) {
-        setCurrentRole((prev) => ({
+        const c = data.criteria;
+
+        // Strictly normalize seniority level to match select dropdown values
+        let normSeniority = "Senior";
+        const rawSen = (c.seniority_level || "").toLowerCase();
+        if (rawSen.includes("lead") || rawSen.includes("manager") || rawSen.includes("head")) {
+          normSeniority = "Lead / Manager";
+        } else if (rawSen.includes("staff") || rawSen.includes("principal")) {
+          normSeniority = "Staff / Principal";
+        } else if (rawSen.includes("director") || rawSen.includes("exec") || rawSen.includes("vp")) {
+          normSeniority = "Executive";
+        } else if (rawSen.includes("senior")) {
+          normSeniority = "Senior";
+        } else if (rawSen.includes("mid") || rawSen.includes("intermediate")) {
+          normSeniority = "Mid-Level";
+        } else if (rawSen.includes("entry") || rawSen.includes("junior") || rawSen.includes("intern")) {
+          normSeniority = "Entry Level";
+        }
+
+        // Normalize work mode
+        let normWorkMode = "Remote";
+        const rawWm = (c.work_mode || "").toLowerCase();
+        if (rawWm.includes("hybrid")) normWorkMode = "Hybrid";
+        else if (rawWm.includes("on-site") || rawWm.includes("onsite") || rawWm.includes("office")) normWorkMode = "On-site";
+        else if (rawWm.includes("remote")) normWorkMode = "Remote";
+
+        setJobRequirements((prev) => ({
           ...prev,
-          title: data.criteria.job_title || prev.title,
-          experience: `${data.criteria.min_years_experience || 5}+ years`,
-          requirements: data.criteria.mandatory_skills || prev.requirements,
+          // A. Job Information
+          jobTitle: c.job_title || file.name.replace(/\.[^/.]+$/, ""),
+          jobDescription: c.job_description || data.raw_jd || prev.jobDescription,
+          department: c.department || prev.department,
+          employmentType: c.employment_type || prev.employmentType,
+          seniorityLevel: normSeniority,
+          vacancies: c.vacancies || prev.vacancies,
+
+          // B. Required Skills & Technologies
+          mandatorySkills: Array.isArray(c.mandatory_skills) && c.mandatory_skills.length > 0 ? c.mandatory_skills : prev.mandatorySkills,
+          preferredSkills: Array.isArray(c.preferred_skills) && c.preferred_skills.length > 0 ? c.preferred_skills : prev.preferredSkills,
+          technologies: Array.isArray(c.technologies) && c.technologies.length > 0 ? c.technologies : prev.technologies,
+          toolsPlatforms: Array.isArray(c.tools_platforms) && c.tools_platforms.length > 0 ? c.tools_platforms : prev.toolsPlatforms,
+          domainExpertise: Array.isArray(c.domain_expertise) && c.domain_expertise.length > 0 ? c.domain_expertise : prev.domainExpertise,
+          certifications: Array.isArray(c.certifications) && c.certifications.length > 0 ? c.certifications : prev.certifications,
+
+          // C. Experience Requirements
+          minExperience: c.min_years_experience !== null && c.min_years_experience !== undefined ? c.min_years_experience : prev.minExperience,
+          maxExperience: c.max_years_experience !== null && c.max_years_experience !== undefined ? c.max_years_experience : (c.min_years_experience ? Math.max(Number(c.min_years_experience) + 4, prev.maxExperience) : prev.maxExperience),
+          relevantExperience: c.relevant_experience || prev.relevantExperience,
+          leadershipExperience: c.leadership_experience || prev.leadershipExperience,
+
+          // D. Location Requirements
+          country: c.country || prev.country,
+          stateRegion: c.state_region || prev.stateRegion,
+          city: c.city || prev.city,
+          preferredLocations: (Array.isArray(c.preferred_locations) && c.preferred_locations.length > 0)
+            ? c.preferred_locations
+            : (Array.isArray(c.target_locations) && c.target_locations.length > 0 ? c.target_locations : prev.preferredLocations),
+          workMode: normWorkMode,
+          willingnessToRelocate: c.willingness_to_relocate !== undefined ? c.willingness_to_relocate : prev.willingnessToRelocate,
+
+          // E. Additional Hiring Preferences
+          salaryRange: c.salary_range || prev.salaryRange,
+          noticePeriod: c.notice_period || prev.noticePeriod,
+          educationRequirements: c.education_requirements || prev.educationRequirements,
+          preferredIndustries: Array.isArray(c.preferred_industries) && c.preferred_industries.length > 0 ? c.preferred_industries : prev.preferredIndustries,
+          companiesToTarget: Array.isArray(c.companies_to_target) && c.companies_to_target.length > 0 ? c.companies_to_target : prev.companiesToTarget,
+          companiesToExclude: Array.isArray(c.companies_to_exclude) && c.companies_to_exclude.length > 0 ? c.companies_to_exclude : prev.companiesToExclude,
+          additionalInstructions: c.additional_instructions || prev.additionalInstructions,
         }));
       }
 
-      addTelemetryLog(`Target role confirmed: "${data.criteria.job_title}"`, "shield");
-      addTelemetryLog(`Generated Search Plan: "${data.search_plan.linkedin_keywords}"`, "search");
-      setIsJdEditorOpen(false);
-
-      // Proactively trigger the AI Agent Sourcing Handover Dialog
-      setIsPostJdPromptOpen(true);
+      setUploadedFile({
+        name: file.name,
+        size: `${(file.size / 1024).toFixed(1)} KB`,
+        type: file.name.split(".").pop().toUpperCase(),
+      });
+      setUploadProgress(100);
+      addTelemetryLog(`JD Document "${file.name}" parsed into structured job requirements!`, "shield");
     } catch (err) {
-      setError(`Analysis error: ${err.message}`);
-      addTelemetryLog(`Analysis error: ${err.message}`, "file");
+      setStep1ValidationError(`Document parsing failed: ${err.message}`);
+      addTelemetryLog(`Document upload error: ${err.message}`, "file");
     } finally {
-      setAnalyzing(false);
+      setUploadingJd(false);
     }
   };
+
+  // Step 1 -> Step 2: Validate & Generate 3 AI Search Queries
+  const handleStep1Next = async () => {
+    if (!jobRequirements.jobTitle.trim()) {
+      setStep1ValidationError("Job Title / Role is mandatory before generating search queries.");
+      return;
+    }
+    setStep1ValidationError("");
+    setGeneratingQueries(true);
+    // Reset session execution state so subsequent step 3 is fresh
+    if (!sourcing) {
+      setSessionState("idle");
+      setSessionProgress(0);
+      setSourcingStage("");
+      setExecutionStats({
+        discovered: 0,
+        extracted: 0,
+        evaluated: 0,
+        saved: 0,
+        duplicates: 0,
+        durationSeconds: 0,
+      });
+      setSessionError(null);
+      setError(null);
+      setActiveSessionId(null);
+    }
+    addTelemetryLog(`Generating 3 strategic LinkedIn queries for "${jobRequirements.jobTitle}"...`, "search");
+
+    try {
+      const res = await fetch(`${apiBase}/api/jobs/generate-queries`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          job_title: jobRequirements.jobTitle,
+          job_description: jobRequirements.jobDescription,
+          department: jobRequirements.department,
+          employment_type: jobRequirements.employmentType,
+          seniority_level: jobRequirements.seniorityLevel,
+          vacancies: jobRequirements.vacancies,
+          mandatory_skills: jobRequirements.mandatorySkills,
+          preferred_skills: jobRequirements.preferredSkills,
+          technologies: jobRequirements.technologies,
+          tools_platforms: jobRequirements.toolsPlatforms,
+          domain_expertise: jobRequirements.domainExpertise,
+          certifications: jobRequirements.certifications,
+          min_years_experience: Number(jobRequirements.minExperience) || 3,
+          max_years_experience: Number(jobRequirements.maxExperience) || 8,
+          relevant_experience: jobRequirements.relevantExperience,
+          leadership_experience: jobRequirements.leadershipExperience,
+          country: jobRequirements.country,
+          state_region: jobRequirements.stateRegion,
+          city: jobRequirements.city,
+          preferred_locations: (Array.isArray(jobRequirements.preferredLocations) && jobRequirements.preferredLocations.length > 0)
+            ? jobRequirements.preferredLocations
+            : [jobRequirements.city, jobRequirements.stateRegion, jobRequirements.country].filter(Boolean),
+          work_mode: jobRequirements.workMode,
+          willingness_to_relocate: jobRequirements.willingnessToRelocate,
+          salary_range: jobRequirements.salaryRange,
+          notice_period: jobRequirements.noticePeriod,
+          education_requirements: jobRequirements.educationRequirements,
+          preferred_industries: jobRequirements.preferredIndustries,
+          companies_to_target: jobRequirements.companiesToTarget,
+          companies_to_exclude: jobRequirements.companiesToExclude,
+          additional_instructions: jobRequirements.additionalInstructions,
+        }),
+      });
+
+      if (!res.ok) throw new Error(`Query generation failed (${res.status})`);
+      const queries = await res.json();
+      setStrategicQueries(queries);
+      if (queries.length > 0) {
+        setSelectedQueryId(queries[0].id);
+      }
+      setWizardStep(2);
+      addTelemetryLog("Formulated 3 recruiter-grade Boolean search queries for HR review", "shield");
+    } catch (err) {
+      setStep1ValidationError(`Failed to generate queries: ${err.message}`);
+      addTelemetryLog(`Query generation error: ${err.message}`, "file");
+    } finally {
+      setGeneratingQueries(false);
+    }
+  };
+
+  // Step 2: Regenerate an individual query
+  const handleRegenerateSingleQuery = async (strategyId) => {
+    setRegeneratingQueryId(strategyId);
+    addTelemetryLog(`Regenerating strategic query #${strategyId}...`, "search");
+    try {
+      const res = await fetch(`${apiBase}/api/jobs/regenerate-query`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          strategy_id: strategyId,
+          job_title: jobRequirements.jobTitle,
+          mandatory_skills: jobRequirements.mandatorySkills,
+          preferred_skills: jobRequirements.preferredSkills,
+          technologies: jobRequirements.technologies,
+          domain_expertise: jobRequirements.domainExpertise,
+          preferred_locations: (Array.isArray(jobRequirements.preferredLocations) && jobRequirements.preferredLocations.length > 0)
+            ? jobRequirements.preferredLocations
+            : [jobRequirements.city, jobRequirements.stateRegion, jobRequirements.country].filter(Boolean),
+          state_region: jobRequirements.stateRegion,
+          city: jobRequirements.city,
+          country: jobRequirements.country,
+          min_years_experience: Number(jobRequirements.minExperience) || 3,
+        }),
+      });
+      if (res.ok) {
+        const newQuery = await res.json();
+        setStrategicQueries((prev) => prev.map((q) => (q.id === strategyId ? newQuery : q)));
+        addTelemetryLog(`Regenerated query #${strategyId} successfully`, "shield");
+      }
+    } catch (err) {
+      console.warn("Regenerate query error:", err);
+    } finally {
+      setRegeneratingQueryId(null);
+    }
+  };
+
+  // Step 2: Regenerate all 3 queries
+  const handleRegenerateAllQueries = async () => {
+    setGeneratingQueries(true);
+    addTelemetryLog("Regenerating all 3 LinkedIn search strategies...", "search");
+    try {
+      const res = await fetch(`${apiBase}/api/jobs/generate-queries`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          job_title: jobRequirements.jobTitle,
+          mandatory_skills: jobRequirements.mandatorySkills,
+          preferred_skills: jobRequirements.preferredSkills,
+          technologies: jobRequirements.technologies,
+          tools_platforms: jobRequirements.toolsPlatforms,
+          domain_expertise: jobRequirements.domainExpertise,
+          preferred_locations: (Array.isArray(jobRequirements.preferredLocations) && jobRequirements.preferredLocations.length > 0)
+            ? jobRequirements.preferredLocations
+            : [jobRequirements.city, jobRequirements.stateRegion, jobRequirements.country].filter(Boolean),
+          state_region: jobRequirements.stateRegion,
+          city: jobRequirements.city,
+          country: jobRequirements.country,
+          seniority_level: jobRequirements.seniorityLevel,
+          min_years_experience: Number(jobRequirements.minExperience) || 3,
+        }),
+      });
+      if (res.ok) {
+        const queries = await res.json();
+        setStrategicQueries(queries);
+        addTelemetryLog("All 3 search queries refreshed with alternative Boolean logic", "shield");
+      }
+    } catch (err) {
+      console.warn("Regenerate all error:", err);
+    } finally {
+      setGeneratingQueries(false);
+    }
+  };
+
+  // Step 2 -> Step 3
+  const handleStep2Next = () => {
+    // If not actively sourcing, ensure Step 3 opens clean and unlocked for this role's parameters
+    if (!sourcing) {
+      setSessionState("idle");
+      setSessionProgress(0);
+      setSourcingStage("");
+      setExecutionStats({
+        discovered: 0,
+        extracted: 0,
+        evaluated: 0,
+        saved: 0,
+        duplicates: 0,
+        durationSeconds: 0,
+      });
+      setSessionError(null);
+      setError(null);
+      setActiveSessionId(null);
+    }
+    setWizardStep(3);
+  };
+
 
   // Stop Active Sourcing Session
   const handleStopSourcing = async () => {
@@ -802,7 +1211,8 @@ export default function Home() {
   // Launch Playwright Search & Gemini Scoring
   const handleLaunchSourcing = async (modeOverride) => {
     const effectiveMode = (typeof modeOverride === "string" ? modeOverride : null) || searchMode || "autonomous";
-    setIsSourcingModalOpen(true);
+    setIsWizardOpen(true);
+    setWizardStep(3);
     setSourcing(true);
     setError(null);
     setSessionError(null);
@@ -816,9 +1226,12 @@ export default function Home() {
         : `Launching headed ${channelName} browser directly to LinkedIn...`
     );
 
-    const query =
-      analysisResult?.search_plan?.linkedin_keywords ||
-      `"${currentRole.title}" React Next.js Python FastAPI`;
+    const activeQueryObj = strategicQueries.find((q) => q.id === selectedQueryId);
+    const query = (
+      activeQueryObj?.query ||
+      aiSearchPrompt ||
+      `"${jobRequirements.jobTitle}" ${(jobRequirements.mandatorySkills || []).slice(0, 3).map((s) => `"${s}"`).join(" ")}`
+    ).trim();
 
     addTelemetryLog(
       `Launching ${
@@ -830,9 +1243,27 @@ export default function Home() {
       }...`,
       "search"
     );
-    addTelemetryLog(`Search query: ${query}`, "search");
+    addTelemetryLog(`Active search query: ${query}`, "search");
+
+    setExecutionStats({
+      discovered: 0,
+      extracted: 0,
+      evaluated: 0,
+      saved: 0,
+      duplicates: 0,
+      durationSeconds: 0,
+      startTime: Date.now(),
+    });
 
     try {
+      const activeLocations = [jobRequirements.city, jobRequirements.stateRegion, jobRequirements.country].filter(Boolean);
+      const activeLocStr = activeLocations.join(", ") || jobRequirements.location || "";
+      const activePrefLocs = activeLocations.length > 0
+        ? activeLocations
+        : (Array.isArray(jobRequirements.preferredLocations) && jobRequirements.preferredLocations.length > 0
+            ? jobRequirements.preferredLocations
+            : (jobRequirements.location ? [jobRequirements.location] : (jobRequirements.city ? [jobRequirements.city] : [])));
+
       // Step 1: Start background sourcing session
       const startRes = await fetch(`${apiBase}/api/sourcing/start-session`, {
         method: "POST",
@@ -842,7 +1273,12 @@ export default function Home() {
           max_results: maxResults,
           mode: effectiveMode,
           browser_channel: browserChannel,
+          account_id: selectedAccountId,
           deep_scrape: true,
+          role_title: jobRequirements.jobTitle || "Software Engineer",
+          mandatory_skills: jobRequirements.mandatorySkills || [],
+          location: activeLocStr,
+          preferred_locations: activePrefLocs,
         }),
       });
 
@@ -855,7 +1291,8 @@ export default function Home() {
       let isDone = false;
       let sessionResult = null;
       let pollCount = 0;
-      const maxPolls = 150; // ~120 seconds max
+      let lastLoggedMessage = "";
+      const maxPolls = 300; // ~240 seconds max to prevent premature abort during live scraping
 
       while (!isDone && pollCount < maxPolls) {
         await new Promise((resolve) => setTimeout(resolve, 800));
@@ -869,37 +1306,73 @@ export default function Home() {
             setSessionProgress(data.progress || 20);
             if (data.message) {
               setSourcingStage(data.message);
+              if (data.message !== lastLoggedMessage) {
+                lastLoggedMessage = data.message;
+                if (data.message.includes("AI Decision Layer") || data.message.includes("pivoted") || data.message.includes("saturated")) {
+                  addTelemetryLog(data.message, "search");
+                } else if (data.message.includes("duplicates skipped") || data.message.includes("duplicate profiles")) {
+                  addTelemetryLog(data.message, "shield");
+                }
+              }
             }
 
             if (data.candidates && data.candidates.length > 0) {
               const timestamp = Date.now();
-              const liveHarvested = data.candidates.map((c, idx) => ({
-                id: c.id || `live_${timestamp}_${idx}`,
-                name: c.name,
-                avatar: c.avatar_url || VERIFIED_AVATARS[idx % VERIFIED_AVATARS.length],
-                location: c.location || "Remote",
-                title: c.headline?.split(" at ")[0] || "Software Engineer",
-                company: c.current_company || "Technology Co.",
-                headline: c.headline,
-                canonical_url: c.canonical_url,
-                skill_match: 82 + (idx % 3) * 4,
-                evidence_status: "Verified",
-                sources: ["linkedin", "web"],
-                status: "New",
-                selected: false,
-                experience_years: c.experience_years || 5.0,
-                about: c.about || "",
-                experience_history: c.experience_history || [],
-                skills: c.skills || [],
-                stored_in_db: true,
-                match_level: "High",
-                justification: "Autonomous Browser Agent navigated and extracted complete resume into local SQLite database.",
-                evidence_quotes: (c.skills || []).slice(0, 3).map((s) => ({
-                  requirement: s,
-                  quote: `${c.headline || c.about || "Verified profile skill"}`,
-                  confidence: 0.9,
-                })),
-                missing_skills: [],
+              const liveHarvested = data.candidates.map((c, idx) => {
+                const cleanLoc = c.location && !c.location.toLowerCase().includes("location on profile") && !c.location.toLowerCase().includes("technology co.") ? c.location : "";
+                const cleanComp = c.current_company && !c.current_company.toLowerCase().includes("technology co.") ? c.current_company : "";
+                return {
+                  id: c.id || `live_${timestamp}_${idx}`,
+                  name: c.name?.split(/[•·]/)[0]?.replace(/\b(1st\+?|2nd\+?|3rd\+?|view profile|connect|message)\b/gi, '')?.trim() || c.name,
+                  avatar: c.avatar_url || VERIFIED_AVATARS[idx % VERIFIED_AVATARS.length],
+                  location: cleanLoc || c.location || "",
+                  title: c.headline?.split(" at ")[0] || "Software Engineer",
+                  company: cleanComp,
+                  headline: c.headline,
+                  canonical_url: c.canonical_url,
+                  skill_match: c.fit_score != null ? Math.round(c.fit_score) : null,
+                  evidence_status: c.fit_score != null ? "Verified" : "Pending Review",
+                  sources: ["linkedin", "web"],
+                  status: "New",
+                  selected: false,
+                  experience_years: c.experience_years || 5.0,
+                  about: c.about || "",
+                  experience_history: c.experience_history || [],
+                  education: c.education || [],
+                  certifications: c.certifications || [],
+                  projects: c.projects || [],
+                  recent_activity: c.recent_activity || [],
+                  section_scores: c.section_scores || {},
+                  skills: c.skills || [],
+                  stored_in_db: true,
+                  target_role: c.target_role || jobRequirements.jobTitle || "Senior Fullstack Engineer",
+                  job_title: c.target_role || jobRequirements.jobTitle || "Senior Fullstack Engineer",
+                  match_level: c.match_level || "High",
+                  justification: c.justification || "Autonomous Browser Agent navigated and extracted complete resume into candidate profile.",
+                  evidence_quotes: (c.evidence_quotes && c.evidence_quotes.length > 0) ? c.evidence_quotes : (c.skills || []).slice(0, 3).map((s) => ({
+                    requirement: s,
+                    quote: `${c.headline || c.about || "Verified profile skill"}`,
+                    confidence: 0.9,
+                  })),
+                  missing_skills: c.missing_criteria || [],
+                  current_location: c.current_location || cleanLoc || c.location || "",
+                  preferred_work_locations: c.preferred_work_locations || [],
+                  willingness_to_relocate: c.willingness_to_relocate || "Unknown",
+                  work_authorization: c.work_authorization || "",
+                  location_compatibility_status: c.location_compatibility_status || "Compatible",
+                  location_compatibility_reason: c.location_compatibility_reason || "",
+                  domain_relevance: c.domain_relevance || "Relevant",
+                  domain_relevance_notes: c.domain_relevance_notes || "",
+                  evaluation_coverage: c.evaluation_coverage !== undefined ? c.evaluation_coverage : 100,
+                  category_evaluations: c.category_evaluations || {},
+                };
+              });
+
+              setExecutionStats((prev) => ({
+                ...prev,
+                discovered: Math.max(prev.discovered, liveHarvested.length + (data.duplicates_count || 0)),
+                extracted: liveHarvested.length,
+                duplicates: data.duplicates_count || prev.duplicates,
               }));
 
               setCandidateList((prev) => {
@@ -937,20 +1410,22 @@ export default function Home() {
       }
 
       const extractedCandidates = sessionResult.candidates || [];
-      addTelemetryLog(`Agent extracted & persisted ${extractedCandidates.length} candidate profiles into SQLite!`, "file");
+      addTelemetryLog(`Agent extracted & saved ${extractedCandidates.length} candidate profiles!`, "file");
 
       // Step 3: Run Gemini AI Evaluation if candidates found
       if (extractedCandidates.length > 0) {
         setPipelineStep(4);
         setSourcingStage(`Harvested ${extractedCandidates.length} profiles! Scoring evidence with Gemini AI...`);
 
-        const criteria = analysisResult?.criteria || {
-          job_title: currentRole.title,
-          seniority_level: "Senior",
-          min_years_experience: 5.0,
-          mandatory_skills: currentRole.requirements.slice(0, 5),
-          preferred_skills: currentRole.requirements.slice(5),
-          criteria_list: currentRole.requirements.map((req) => ({
+        const criteria = {
+          job_title: jobRequirements.jobTitle || "Software Engineer",
+          seniority_level: jobRequirements.seniorityLevel || "Senior",
+          min_years_experience: Number(jobRequirements.minExperience) || 3,
+          mandatory_skills: jobRequirements.mandatorySkills || [],
+          preferred_skills: jobRequirements.preferredSkills || [],
+          location: activeLocStr,
+          preferred_locations: activePrefLocs,
+          criteria_list: (jobRequirements.mandatorySkills || []).map((req) => ({
             category: "skills",
             requirement: req,
             is_mandatory: true,
@@ -972,14 +1447,17 @@ export default function Home() {
             const evalData = await evalRes.json();
             if (evalData.evaluated_candidates && evalData.evaluated_candidates.length > 0) {
               const liveEvaluated = evalData.evaluated_candidates.map(({ candidate, evaluation }, idx) => {
-                const fit = Math.round(Number(evaluation.fit_score) || 75);
+                const fitScoreNum = Number(evaluation.fit_score);
+                const fit = !isNaN(fitScoreNum) ? Math.max(0, Math.min(100, Math.round(fitScoreNum))) : 0;
+                const cleanLoc = candidate.location && !candidate.location.toLowerCase().includes("location on profile") && !candidate.location.toLowerCase().includes("technology co.") ? candidate.location : "";
+                const cleanComp = candidate.current_company && !candidate.current_company.toLowerCase().includes("technology co.") ? candidate.current_company : "";
                 return {
                   id: `live_${Date.now()}_${idx}_${candidate.id || idx}`,
                   name: candidate.name,
                   avatar: candidate.avatar_url || VERIFIED_AVATARS[idx % VERIFIED_AVATARS.length],
-                  location: candidate.location || "Remote",
+                  location: cleanLoc || candidate.location || "",
                   title: candidate.headline.split(" at ")[0] || "Software Engineer",
-                  company: candidate.current_company || "Technology Co.",
+                  company: cleanComp,
                   headline: candidate.headline,
                   canonical_url: candidate.canonical_url,
                   skill_match: fit,
@@ -990,8 +1468,15 @@ export default function Home() {
                   experience_years: candidate.experience_years || 5.0,
                   about: candidate.about || "",
                   experience_history: candidate.experience_history || [],
+                  education: candidate.education || [],
+                  certifications: candidate.certifications || [],
+                  projects: candidate.projects || [],
+                  recent_activity: candidate.recent_activity || [],
+                  section_scores: evaluation.section_scores || candidate.section_scores || {},
                   skills: candidate.skills || [],
                   stored_in_db: true,
+                  target_role: candidate.target_role || evaluation.job_title || criteria.job_title || jobRequirements.jobTitle || "Senior Fullstack Engineer",
+                  job_title: candidate.target_role || evaluation.job_title || criteria.job_title || jobRequirements.jobTitle || "Senior Fullstack Engineer",
                   match_level: evaluation.match_level,
                   justification: evaluation.justification_summary,
                   evidence_quotes: (evaluation.evidence_quotes || []).map((m) => ({
@@ -1000,6 +1485,16 @@ export default function Home() {
                     confidence: m.confidence || 0.9,
                   })),
                   missing_skills: evaluation.missing_criteria || [],
+                  current_location: candidate.current_location || cleanLoc || candidate.location || "",
+                  preferred_work_locations: candidate.preferred_work_locations || [],
+                  willingness_to_relocate: candidate.willingness_to_relocate || "Unknown",
+                  work_authorization: candidate.work_authorization || "",
+                  location_compatibility_status: evaluation.location_compatibility?.status || candidate.location_compatibility_status || "Compatible",
+                  location_compatibility_reason: evaluation.location_compatibility?.reason || candidate.location_compatibility_reason || "",
+                  domain_relevance: evaluation.domain_relevance || candidate.domain_relevance || "Relevant",
+                  domain_relevance_notes: evaluation.domain_relevance_notes || candidate.domain_relevance_notes || "",
+                  evaluation_coverage: evaluation.evaluation_coverage !== undefined ? evaluation.evaluation_coverage : 100,
+                  category_evaluations: evaluation.category_evaluations || candidate.category_evaluations || {},
                 };
               });
 
@@ -1013,13 +1508,25 @@ export default function Home() {
         } catch (evalErr) {
           console.warn("Evaluation step warning:", evalErr);
         }
+
+        try {
+          await fetchStoredCandidates(apiBase);
+        } catch (syncErr) {
+          console.warn("Post-evaluation candidate sync warning:", syncErr);
+        }
       }
 
       setPipelineStep(5);
       setSessionState("completed");
       setSessionProgress(100);
-      setSourcingStage(`🎉 Done! Harvested ${extractedCandidates.length} profiles into SQLite database. Headed ${channelName} browser remains open.`);
-      addTelemetryLog(`Shortlist refreshed with ${extractedCandidates.length} verified candidate profiles (stored in SQLite)!`, "shield");
+      setExecutionStats((prev) => ({
+        ...prev,
+        evaluated: extractedCandidates.length,
+        saved: extractedCandidates.length,
+        durationSeconds: Math.max(1, Math.round((Date.now() - (prev.startTime || Date.now())) / 1000)),
+      }));
+      setSourcingStage(`🎉 Done! Harvested ${extractedCandidates.length} profiles. Headed ${channelName} browser remains open.`);
+      addTelemetryLog(`Shortlist refreshed with ${extractedCandidates.length} verified candidate profiles!`, "shield");
 
     } catch (err) {
       setError(`Sourcing error: ${err.message}`);
@@ -1042,6 +1549,229 @@ export default function Home() {
     addTelemetryLog(`Candidate status updated: ${newStatus}`, "shield");
   };
 
+  // Candidate Deletion
+  const handleDeleteCandidate = async (candidateId) => {
+    try {
+      const res = await fetch(`${apiBase}/api/sourcing/candidates/${candidateId}`, { method: "DELETE" });
+      if (res.ok) {
+        setCandidateList((prev) => prev.filter((c) => c.id !== candidateId));
+        if (selectedCandidate && selectedCandidate.id === candidateId) {
+          setSelectedCandidate(null);
+        }
+        addTelemetryLog("Candidate removed from database and shortlist.", "shield");
+      }
+    } catch (err) {
+      console.error("Delete candidate error:", err);
+    }
+  };
+
+  const handleClearAllCandidates = async () => {
+    if (!window.confirm("Are you sure you want to remove all candidate records from the database?")) return;
+    try {
+      const res = await fetch(`${apiBase}/api/sourcing/candidates`, { method: "DELETE" });
+      if (res.ok) {
+        setCandidateList([]);
+        setSelectedCandidate(null);
+        addTelemetryLog("All candidate records cleared from database.", "shield");
+      }
+    } catch (err) {
+      console.error("Clear candidates error:", err);
+    }
+  };
+
+  // On-Demand AI Evaluation for Single Candidate against Chosen Role Requisition
+  const handleEvaluateSingleCandidate = async (candidate, targetRoleName) => {
+    if (!candidate) return;
+    setEvaluatingCandidateId(candidate.id);
+    const chosenRole = targetRoleName || candidate.target_role || candidate.job_title || jobRequirements.jobTitle || "Senior Fullstack Engineer";
+    addTelemetryLog(`Evaluating candidate ${candidate.name} against requisition: ${chosenRole}...`, "sparkles");
+    try {
+      const activeLocs = [jobRequirements.city, jobRequirements.stateRegion, jobRequirements.country].filter(Boolean);
+      const activeLocStr = activeLocs.join(", ") || jobRequirements.location || "";
+      const activePrefLocs = activeLocs.length > 0
+        ? activeLocs
+        : (jobRequirements.preferredLocations || (jobRequirements.location ? [jobRequirements.location] : []));
+
+      const matchedJob = savedJobs.find((j) => (j.job_title || "").toLowerCase() === chosenRole.toLowerCase());
+      const criteria = matchedJob ? {
+        job_title: matchedJob.job_title,
+        seniority_level: matchedJob.seniority_level || "Senior",
+        min_years_experience: Number(matchedJob.min_years_experience) || 3,
+        mandatory_skills: matchedJob.mandatory_skills || [],
+        preferred_skills: matchedJob.preferred_skills || [],
+        location: matchedJob.location || activeLocStr,
+        preferred_locations: matchedJob.preferred_locations || (matchedJob.location ? [matchedJob.location] : activePrefLocs),
+      } : {
+        job_title: chosenRole,
+        seniority_level: jobRequirements.seniorityLevel || "Senior",
+        min_years_experience: Number(jobRequirements.minExperience) || 3,
+        mandatory_skills: jobRequirements.mandatorySkills || [],
+        preferred_skills: jobRequirements.preferredSkills || [],
+        location: activeLocStr,
+        preferred_locations: activePrefLocs,
+      };
+
+      const res = await fetch(`${apiBase}/api/sourcing/evaluate-candidates`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          candidates: [{ ...candidate, target_role: chosenRole }],
+          criteria: criteria,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.evaluated_candidates && data.evaluated_candidates.length > 0) {
+          const { evaluation } = data.evaluated_candidates[0];
+          const fit = Math.round(Number(evaluation.fit_score));
+          const updated = {
+            ...candidate,
+            skill_match: fit,
+            target_role: chosenRole,
+            job_title: chosenRole,
+            evidence_status: fit >= 80 ? "Verified" : fit >= 60 ? "Partial" : "Not Verified",
+            match_level: evaluation.match_level,
+            justification: evaluation.justification_summary,
+            section_scores: evaluation.section_scores || {},
+            category_evaluations: evaluation.category_evaluations || {},
+            evidence_quotes: (evaluation.evidence_quotes || []).map((m) => ({
+              requirement: m.criterion_requirement || m.requirement || "Skill",
+              quote: m.verbatim_quote || m.quote || "",
+              confidence: m.confidence || 0.9,
+            })),
+            missing_skills: evaluation.missing_criteria || [],
+            location_compatibility_status: evaluation.location_compatibility?.status || candidate.location_compatibility_status,
+            location_compatibility_reason: evaluation.location_compatibility?.reason || candidate.location_compatibility_reason,
+            domain_relevance: evaluation.domain_relevance || candidate.domain_relevance,
+            domain_relevance_notes: evaluation.domain_relevance_notes || candidate.domain_relevance_notes,
+            evaluation_coverage: evaluation.evaluation_coverage !== undefined ? evaluation.evaluation_coverage : 100,
+          };
+          setSelectedCandidate(updated);
+          setCandidateList((prev) => prev.map((c) => (c.id === candidate.id ? updated : c)));
+          addTelemetryLog(`Evaluated ${candidate.name} against ${chosenRole}: ${fit}% fit score (${evaluation.match_level})`, "shield");
+        }
+      }
+    } catch (err) {
+      console.error("Evaluation error:", err);
+      addTelemetryLog(`Evaluation error: ${err.message}`, "file");
+    } finally {
+      setEvaluatingCandidateId(null);
+    }
+  };
+
+  // Batch Evaluate Candidates - evaluates candidates against respective role requisitions
+  const handleEvaluateAllCandidates = async () => {
+    const candidatesToEval = selectedRoleFilter === "All"
+      ? candidateList
+      : candidateList.filter((c) => (c.target_role || c.job_title || "").toLowerCase().includes(selectedRoleFilter.toLowerCase()));
+
+    if (!candidatesToEval.length) return;
+    setBatchEvaluating(true);
+    const roleTargetLabel = selectedRoleFilter === "All" ? "their designated target roles" : selectedRoleFilter;
+    addTelemetryLog(`Starting multi-role batch evaluation for ${candidatesToEval.length} candidates against ${roleTargetLabel}...`, "sparkles");
+    try {
+      const activeLocs = [jobRequirements.city, jobRequirements.stateRegion, jobRequirements.country].filter(Boolean);
+      const activeLocStr = activeLocs.join(", ") || jobRequirements.location || "";
+      const activePrefLocs = activeLocs.length > 0
+        ? activeLocs
+        : (jobRequirements.preferredLocations || (jobRequirements.location ? [jobRequirements.location] : []));
+
+      const criteria = {
+        job_title: selectedRoleFilter === "All" ? (jobRequirements.jobTitle || "Target Role") : selectedRoleFilter,
+        seniority_level: jobRequirements.seniorityLevel || "Senior",
+        min_years_experience: Number(jobRequirements.minExperience) || 3,
+        mandatory_skills: jobRequirements.mandatorySkills || [],
+        preferred_skills: jobRequirements.preferredSkills || [],
+        location: activeLocStr,
+        preferred_locations: activePrefLocs,
+      };
+      const res = await fetch(`${apiBase}/api/sourcing/evaluate-candidates`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          candidates: candidatesToEval,
+          criteria: criteria,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.evaluated_candidates && data.evaluated_candidates.length > 0) {
+          const evalMap = new Map();
+          data.evaluated_candidates.forEach(({ candidate: c, evaluation: ev }) => {
+            const fit = Math.round(Number(ev.fit_score));
+            evalMap.set(c.id || c.canonical_url, {
+              skill_match: fit,
+              target_role: c.target_role || ev.job_title,
+              job_title: ev.job_title || c.target_role,
+              evidence_status: fit >= 80 ? "Verified" : fit >= 60 ? "Partial" : "Not Verified",
+              match_level: ev.match_level,
+              justification: ev.justification_summary,
+              section_scores: ev.section_scores || {},
+              category_evaluations: ev.category_evaluations || {},
+              evidence_quotes: (ev.evidence_quotes || []).map((m) => ({
+                requirement: m.criterion_requirement || m.requirement || "Skill",
+                quote: m.verbatim_quote || m.quote || "",
+                confidence: m.confidence || 0.9,
+              })),
+              missing_skills: ev.missing_criteria || [],
+              location_compatibility_status: ev.location_compatibility?.status,
+              location_compatibility_reason: ev.location_compatibility?.reason,
+              domain_relevance: ev.domain_relevance,
+              domain_relevance_notes: ev.domain_relevance_notes,
+              evaluation_coverage: ev.evaluation_coverage !== undefined ? ev.evaluation_coverage : 100,
+            });
+          });
+          setCandidateList((prev) =>
+            prev.map((c) => {
+              const ev = evalMap.get(c.id) || evalMap.get(c.canonical_url);
+              return ev ? { ...c, ...ev } : c;
+            })
+          );
+          addTelemetryLog(`Batch evaluation complete: Evaluated ${data.evaluated_candidates.length} candidates against their target roles!`, "shield");
+        }
+      }
+    } catch (err) {
+      console.error("Batch evaluation error:", err);
+      addTelemetryLog(`Batch evaluation error: ${err.message}`, "file");
+    } finally {
+      setBatchEvaluating(false);
+    }
+  };
+
+  // Sync Local Candidates and Evaluations to Supabase PostgreSQL
+  const handleSyncSupabase = async () => {
+    setSyncingSupabase(true);
+    addTelemetryLog("Syncing local candidate profiles and evaluations to Supabase PostgreSQL...", "database");
+    try {
+      const res = await fetch(`${apiBase}/api/sourcing/sync-supabase`, { method: "POST" });
+      if (res.ok) {
+        const data = await res.json();
+        addTelemetryLog(
+          `Supabase Cloud Sync: ${data.message || (data.synced_candidates !== undefined ? `Synced ${data.synced_candidates} candidates` : 'Synced to Supabase successfully')}`,
+          "shield"
+        );
+      } else {
+        addTelemetryLog("Supabase Cloud Sync failed. Check API keys in .env", "file");
+      }
+    } catch (err) {
+      console.error("Supabase sync error:", err);
+      addTelemetryLog(`Supabase sync error: ${err.message}`, "file");
+    } finally {
+      setSyncingSupabase(false);
+    }
+  };
+
+  const availableRoles = useMemo(() => {
+    const roleCounts = {};
+    candidateList.forEach((c) => {
+      const r = (c.target_role || c.job_title || "General").trim();
+      if (r) {
+        roleCounts[r] = (roleCounts[r] || 0) + 1;
+      }
+    });
+    return Object.entries(roleCounts).map(([name, count]) => ({ name, count }));
+  }, [candidateList]);
+
   // Toggle Selection
   const toggleSelectCandidate = (candidateId) => {
     setCandidateList((prev) =>
@@ -1055,7 +1785,7 @@ export default function Home() {
     setCandidateList((prev) => prev.map((c) => ({ ...c, selected: nextState })));
   };
 
-  // Filter & Search Candidates
+  // Filter & Search Candidates with Role Support
   const filteredCandidates = useMemo(() => {
     return candidateList.filter((c) => {
       if (activeTab === "new" && c.status !== "New") return false;
@@ -1063,24 +1793,34 @@ export default function Home() {
       if (activeTab === "shortlisted" && c.status !== "Shortlisted") return false;
       if (activeTab === "not_a_fit" && c.status !== "Not a Fit") return false;
 
+      if (selectedRoleFilter !== "All") {
+        const cRole = (c.target_role || c.job_title || "").toLowerCase();
+        if (!cRole.includes(selectedRoleFilter.toLowerCase())) return false;
+      }
+
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         return (
           c.name.toLowerCase().includes(q) ||
           c.title.toLowerCase().includes(q) ||
           c.company.toLowerCase().includes(q) ||
-          c.location.toLowerCase().includes(q)
+          c.location.toLowerCase().includes(q) ||
+          (c.target_role && c.target_role.toLowerCase().includes(q))
         );
       }
       return true;
     });
-  }, [candidateList, activeTab, searchQuery]);
+  }, [candidateList, activeTab, searchQuery, selectedRoleFilter]);
 
-  // Metrics calculations
-  const totalDiscovered = 240 + candidateList.length;
-  const verifiedCount = candidateList.filter((c) => c.evidence_status === "Verified").length * 26 + 106;
-  const shortlistedCount = candidateList.filter((c) => c.status === "Shortlisted").length + 23;
-  const awaitingReviewCount = candidateList.filter((c) => c.status === "New" || c.status === "In Review").length + 36;
+  // Real Metrics calculations
+  const totalDiscovered = candidateList.length;
+  const verifiedCount = candidateList.filter((c) => c.evidence_status === "Verified").length;
+  const shortlistedCount = candidateList.filter((c) => c.status === "Shortlisted").length;
+  const awaitingReviewCount = candidateList.filter((c) => c.status === "New" || c.status === "In Review").length;
+  const allCount = candidateList.length;
+  const newCount = candidateList.filter((c) => c.status === "New").length;
+  const inReviewCount = candidateList.filter((c) => c.status === "In Review").length;
+  const notAFitCount = candidateList.filter((c) => c.status === "Not a Fit").length;
 
   // Export to CSV
   const exportToCSV = () => {
@@ -1154,7 +1894,7 @@ export default function Home() {
                       setIsJdEditorOpen(true);
                     }
                     if (item.id === "sourcing") {
-                      setIsSourcingModalOpen(true);
+                      handleOpenWizard(sourcing ? 3 : 1);
                     }
                     if (item.id === "reports") {
                       handleOpenReportModal();
@@ -1177,7 +1917,7 @@ export default function Home() {
         <div className="p-3.5 space-y-3 border-t border-slate-100 dark:border-[#141b2d]">
           {/* AI Assistant Card */}
           <div
-            onClick={() => setIsSourcingModalOpen(true)}
+            onClick={() => handleOpenWizard(1)}
             className="p-3 rounded-2xl bg-gradient-to-r from-indigo-50/80 to-purple-50/60 dark:from-[#13192c] dark:to-[#0e1424] border border-indigo-100 dark:border-[#1f2942] hover:border-indigo-300 dark:hover:border-indigo-500/40 cursor-pointer transition-all group shadow-sm"
           >
             <div className="flex items-center justify-between">
@@ -1212,15 +1952,63 @@ export default function Home() {
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto">
         {/* Top Header Bar */}
         <header className="h-16 border-b border-slate-200/80 dark:border-[#141b2d] bg-white/90 dark:bg-[#090d1a]/80 backdrop-blur sticky top-0 z-20 px-8 flex items-center justify-between shrink-0 shadow-xs">
-          {/* Left: Role Switcher / Logo space */}
+          {/* Left: Dynamic Role Badge & Sourcing Wizard Launcher */}
+          {/* Left: Interactive Role Switcher & Sourcing Wizard Launcher */}
           <div className="flex items-center gap-3">
+            <div className="relative">
+              <button
+                onClick={() => setIsRoleDropdownOpen(!isRoleDropdownOpen)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-indigo-50/80 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800 text-xs font-semibold text-indigo-700 dark:text-indigo-300 transition-all cursor-pointer"
+                title="Click to switch target role requisition"
+              >
+                <Briefcase className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                <span className="text-slate-500 dark:text-slate-400">Target Role:</span>
+                <span className="font-bold text-slate-900 dark:text-white max-w-[170px] truncate">
+                  {jobRequirements.jobTitle || "Select Target Role"}
+                </span>
+                <ChevronDown className={`h-3 w-3 text-slate-400 transition-transform ${isRoleDropdownOpen ? "rotate-180" : ""}`} />
+              </button>
+
+              {isRoleDropdownOpen && (
+                <div className="absolute left-0 mt-1.5 w-72 bg-white dark:bg-[#0f172a] border border-slate-200 dark:border-[#1e293b] rounded-2xl shadow-xl z-50 p-2 animate-in fade-in slide-in-from-top-1 duration-150">
+                  <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    Saved Role Requisitions
+                  </div>
+                  <div className="space-y-1 max-h-56 overflow-y-auto">
+                    {savedJobs.map((j) => (
+                      <button
+                        key={j.id || j.job_title}
+                        onClick={() => handleSelectActiveRole(j)}
+                        className={`w-full text-left px-2.5 py-1.5 rounded-xl text-xs flex items-center justify-between transition-colors ${
+                          jobRequirements.jobTitle === j.job_title
+                            ? "bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 font-bold"
+                            : "text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#1e293b]"
+                        }`}
+                      >
+                        <span className="truncate">{j.job_title}</span>
+                        <span className="text-[10px] text-slate-400 shrink-0 ml-1">{j.location || "Remote"}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="border-t border-slate-100 dark:border-[#1e293b] mt-1.5 pt-1.5">
+                    <button
+                      onClick={() => { setIsRoleDropdownOpen(false); handleOpenWizard(1); }}
+                      className="w-full text-left px-2.5 py-1.5 rounded-xl text-xs text-indigo-600 dark:text-indigo-400 font-bold hover:bg-indigo-50 dark:hover:bg-indigo-950/30 flex items-center gap-1.5"
+                    >
+                      <Sparkles className="h-3 w-3" />
+                      <span>+ Configure / Import New Role</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <button
-              onClick={() => setIsJdEditorOpen(true)}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-[#12192e] border border-slate-200 dark:border-[#1f2a47] text-xs font-semibold text-slate-700 dark:text-slate-200 hover:border-indigo-400 transition-colors"
+              onClick={() => handleOpenWizard(1)}
+              className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold shadow-xs hover:shadow-md transition-all active:scale-[0.98]"
             >
-              <span className="text-slate-400">Current Role</span>
-              <span className="font-bold text-slate-900 dark:text-white">{currentRole.title}</span>
-              <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>3-Step Sourcing Wizard</span>
             </button>
           </div>
 
@@ -1231,7 +2019,13 @@ export default function Home() {
                 e.preventDefault();
                 if (aiSearchPrompt.trim()) {
                   addTelemetryLog(`AI prompt received: "${aiSearchPrompt}"`, "search");
-                  setIsSourcingModalOpen(true);
+                  setJobRequirements((prev) => ({
+                    ...prev,
+                    jobTitle: prev.jobTitle || aiSearchPrompt.trim(),
+                    additionalInstructions: aiSearchPrompt.trim(),
+                  }));
+                  setIsWizardOpen(true);
+                  setWizardStep(1);
                 }
               }}
               className="relative flex items-center"
@@ -1260,7 +2054,7 @@ export default function Home() {
             {/* Status Pill matching Image 1 */}
             {sessionState === "waiting_for_login" ? (
               <div
-                onClick={() => setIsSourcingModalOpen(true)}
+                onClick={() => { setIsWizardOpen(true); setWizardStep(3); }}
                 className="flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 shadow-xs cursor-pointer hover:bg-emerald-100 transition-colors animate-in fade-in"
                 title="Click to view Recruiter Safe Handover Mode"
               >
@@ -1272,7 +2066,7 @@ export default function Home() {
               </div>
             ) : sourcing ? (
               <div
-                onClick={() => setIsSourcingModalOpen(true)}
+                onClick={() => { setIsWizardOpen(true); setWizardStep(3); }}
                 className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-indigo-800 dark:text-indigo-300 shadow-xs cursor-pointer"
               >
                 <span className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
@@ -1373,7 +2167,7 @@ export default function Home() {
                 {/* Action Buttons */}
                 <div className="flex items-center gap-3 mt-6">
                   <button
-                    onClick={() => setIsSourcingModalOpen(true)}
+                    onClick={() => { setIsWizardOpen(true); setWizardStep(1); }}
                     className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/25 transition-all active:scale-[0.98]"
                   >
                     <Plus className="h-4 w-4" />
@@ -1389,11 +2183,11 @@ export default function Home() {
                   </button>
 
                   <button
-                    onClick={() => setIsJdEditorOpen(true)}
+                    onClick={() => { setIsWizardOpen(true); setWizardStep(1); }}
                     className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white dark:bg-[#141d33] border border-slate-200 dark:border-[#222e4d] hover:border-indigo-400 text-xs font-semibold text-slate-700 dark:text-slate-200 transition-colors shadow-xs"
                   >
                     <Play className="h-3.5 w-3.5 text-indigo-600 fill-indigo-600" />
-                    <span>How it works</span>
+                    <span>Launch 3-Step Wizard</span>
                   </button>
                 </div>
               </div>
@@ -1497,7 +2291,7 @@ export default function Home() {
                   Running · Started 2h 14m ago
                 </span>
                 <button
-                  onClick={() => setIsSourcingModalOpen(true)}
+                  onClick={() => { setIsWizardOpen(true); setWizardStep(3); }}
                   className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 font-bold flex items-center gap-1 transition-colors"
                 >
                   View Details <ArrowRight className="h-3 w-3" />
@@ -1581,11 +2375,11 @@ export default function Home() {
                   {/* Filter Tabs */}
                   <div className="flex items-center gap-1.5 overflow-x-auto">
                     {[
-                      { id: "all", label: "Candidates", count: totalDiscovered },
-                      { id: "new", label: "New", count: 42 },
-                      { id: "in_review", label: "In Review", count: 58 },
-                      { id: "shortlisted", label: "Shortlisted", count: 24 },
-                      { id: "not_a_fit", label: "Not a Fit", count: 122 },
+                      { id: "all", label: "Candidates", count: allCount },
+                      { id: "new", label: "New", count: newCount },
+                      { id: "in_review", label: "In Review", count: inReviewCount },
+                      { id: "shortlisted", label: "Shortlisted", count: shortlistedCount },
+                      { id: "not_a_fit", label: "Not a Fit", count: notAFitCount },
                     ].map((tab) => (
                       <button
                         key={tab.id}
@@ -1608,8 +2402,25 @@ export default function Home() {
                     ))}
                   </div>
 
-                  {/* Search and Filters */}
-                  <div className="flex items-center gap-2">
+                  {/* Role Selector & Search and Filters */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-100/80 dark:bg-[#12182c] border border-slate-200 dark:border-[#202c4b]">
+                      <Briefcase className="h-3 w-3 text-indigo-500" />
+                      <span className="text-[11px] font-bold text-slate-400">Role:</span>
+                      <select
+                        value={selectedRoleFilter}
+                        onChange={(e) => setSelectedRoleFilter(e.target.value)}
+                        className="bg-transparent text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none cursor-pointer"
+                      >
+                        <option value="All">All Roles ({candidateList.length})</option>
+                        {availableRoles.map((r) => (
+                          <option key={r.name} value={r.name}>
+                            {r.name} ({r.count})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
                     <div className="relative">
                       <Search className="h-3.5 w-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                       <input
@@ -1617,23 +2428,60 @@ export default function Home() {
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         placeholder="Search candidates..."
-                        className="bg-slate-50 dark:bg-[#12182c] border border-slate-200 dark:border-[#202c4b] text-xs rounded-xl pl-9 pr-3 py-1.5 w-44 sm:w-52 text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-500"
+                        className="bg-slate-50 dark:bg-[#12182c] border border-slate-200 dark:border-[#202c4b] text-xs rounded-xl pl-9 pr-3 py-1.5 w-40 sm:w-48 text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-500"
                       />
                     </div>
 
                     <button
-                      onClick={() => setIsSourcingModalOpen(true)}
+                      onClick={handleEvaluateAllCandidates}
+                      disabled={batchEvaluating || candidateList.length === 0}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-xs font-semibold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-colors disabled:opacity-50"
+                      title={selectedRoleFilter === "All" ? "Evaluate all candidates against their designated target roles" : `Evaluate all candidates for ${selectedRoleFilter}`}
+                    >
+                      <Sparkles className={`h-3 w-3 text-indigo-600 dark:text-indigo-400 ${batchEvaluating ? "animate-spin" : ""}`} />
+                      <span>
+                        {batchEvaluating
+                          ? "Evaluating..."
+                          : selectedRoleFilter === "All"
+                          ? "⚡ Evaluate All (By Role)"
+                          : `⚡ Evaluate ${selectedRoleFilter.length > 14 ? selectedRoleFilter.substring(0, 14) + '...' : selectedRoleFilter}`}
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={handleSyncSupabase}
+                      disabled={syncingSupabase || candidateList.length === 0}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition-colors disabled:opacity-50"
+                      title="Sync local candidates and evaluations to Supabase PostgreSQL database"
+                    >
+                      <Cloud className={`h-3 w-3 text-emerald-600 dark:text-emerald-400 ${syncingSupabase ? "animate-bounce" : ""}`} />
+                      <span>{syncingSupabase ? "Syncing..." : "☁️ Sync Cloud"}</span>
+                    </button>
+
+                    <button
+                      onClick={() => handleOpenWizard(1)}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-[#12182c] border border-slate-200 dark:border-[#202c4b] text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-slate-900 hover:border-slate-400 transition-colors"
                     >
                       <Filter className="h-3 w-3 text-slate-500" />
-                      <span>Filters</span>
+                      <span>Configure Wizard</span>
                     </button>
+
+                    {candidateList.length > 0 && (
+                      <button
+                        onClick={handleClearAllCandidates}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/60 transition-colors cursor-pointer"
+                        title="Remove all candidates from database and shortlist"
+                      >
+                        <Trash2 className="h-3 w-3 text-rose-500" />
+                        <span>Clear All</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
                 {/* Table Data */}
                 <div className="overflow-x-auto w-full">
-                  <table className="w-full text-left border-collapse text-xs min-w-[860px]">
+                  <table className="w-full text-left border-collapse text-xs table-fixed min-w-[960px]">
                     <thead>
                       <tr className="border-b border-slate-100 dark:border-[#162038] text-[11px] font-bold text-slate-500 dark:text-slate-400 bg-slate-50/50 dark:bg-[#0c1120]">
                         <th className="py-3 px-3 w-10 text-center">
@@ -1641,21 +2489,47 @@ export default function Home() {
                             {selectAll ? <CheckSquare className="h-3.5 w-3.5 text-indigo-600" /> : <Square className="h-3.5 w-3.5" />}
                           </button>
                         </th>
-                        <th className="py-3 px-4 w-[28%]">Candidate</th>
-                        <th className="py-3 px-4 w-[26%]">Current Title / Company</th>
-                        <th className="py-3 px-4 w-[16%]">Skills Match</th>
-                        <th className="py-3 px-4 w-[12%]">Evidence</th>
-                        <th className="py-3 px-3 w-[8%] text-center">Source</th>
-                        <th className="py-3 px-3 w-[10%]">Status</th>
-                        <th className="py-3 px-4 w-[12%] text-right">Actions</th>
+                        <th className="py-3 px-4 w-[230px]">Candidate</th>
+                        <th className="py-3 px-4 w-[240px]">Current Title / Company</th>
+                        <th className="py-3 px-4 w-[160px]">Target Requisition</th>
+                        <th className="py-3 px-4 w-[130px]">Skills Match</th>
+                        <th className="py-3 px-4 w-[110px]">Evidence</th>
+                        <th className="py-3 px-3 w-[70px] text-center">Source</th>
+                        <th className="py-3 px-4 w-[90px] text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-[#151d33]">
-                      {filteredCandidates.map((candidate, idx) => (
+                      {filteredCandidates.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="py-20 text-center">
+                            <div className="max-w-md mx-auto space-y-3">
+                              <div className="h-12 w-12 rounded-2xl bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mx-auto shadow-xs">
+                                <Users className="h-6 w-6" />
+                              </div>
+                              <h4 className="text-sm font-bold text-slate-900 dark:text-white">No candidates found yet</h4>
+                              <p className="text-xs text-slate-500 dark:text-slate-400">
+                                No candidate records match the active criteria. Launch the 3-Step Sourcing Wizard to configure role requirements and execute browser automation to harvest candidate profiles.
+                              </p>
+                              <div className="pt-2">
+                                <button
+                                  onClick={() => handleOpenWizard(1)}
+                                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-xs font-bold shadow-md shadow-indigo-600/20 hover:shadow-lg transition-all"
+                                >
+                                  <Sparkles className="h-3.5 w-3.5" />
+                                  <span>Launch 3-Step Sourcing Wizard</span>
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : filteredCandidates.map((candidate, idx) => (
                         <tr
                           key={`${candidate.id || 'cand'}_${candidate.canonical_url || candidate.name}_${idx}`}
                           className="hover:bg-slate-50/80 dark:hover:bg-[#12192e]/60 transition-colors group cursor-pointer"
-                          onClick={() => setSelectedCandidate(candidate)}
+                          onClick={() => {
+                            setSelectedCandidate(candidate);
+                            setEvalTargetRole(candidate.target_role || candidate.job_title || jobRequirements.jobTitle || (savedJobs[0]?.job_title || "Senior AI Lead"));
+                          }}
                         >
                           {/* Checkbox */}
                           <td
@@ -1688,17 +2562,20 @@ export default function Home() {
                               />
                               <div className="min-w-0">
                                 <div className="flex items-center gap-1.5">
-                                  <div className="font-bold text-slate-900 dark:text-white text-xs group-hover:text-indigo-600 dark:group-hover:text-indigo-300 transition-colors truncate">
-                                    {candidate.name}
+                                  <div className="font-bold text-slate-900 dark:text-white text-xs group-hover:text-indigo-600 dark:group-hover:text-indigo-300 transition-colors truncate max-w-[170px]">
+                                    {candidate.name?.split(/[•·]/)[0]?.replace(/\b(1st\+?|2nd\+?|3rd\+?|view profile|connect|message)\b/gi, '')?.trim() || candidate.name}
                                   </div>
-                                  {candidate.stored_in_db && (
-                                    <span title="Stored in local SQLite database" className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-md text-[9px] font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-                                      <Database className="h-2.5 w-2.5" /> DB
+                                  {candidate.work_authorization && (
+                                    <span title={candidate.work_authorization} className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-md text-[9px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                                      <Award className="h-2.5 w-2.5 text-amber-600" /> {candidate.work_authorization.includes("Golden Visa") ? "Golden Visa" : candidate.work_authorization}
                                     </span>
                                   )}
                                 </div>
-                                <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                                  {candidate.location}
+                                <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5 flex items-center gap-1">
+                                  <span>{candidate.location}</span>
+                                  {candidate.location_compatibility_status === "Compatible" && (
+                                    <span className="text-[9px] font-semibold text-emerald-600 dark:text-emerald-400">• Compatible</span>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -1706,23 +2583,64 @@ export default function Home() {
 
                           {/* Current Title / Company */}
                           <td className="py-3.5 px-4 whitespace-nowrap">
-                            <div className="font-bold text-slate-800 dark:text-slate-200 text-xs truncate max-w-[210px]">
-                              {candidate.title}
+                            <div className="flex items-center gap-1.5">
+                              <div className="font-bold text-slate-800 dark:text-slate-200 text-xs truncate max-w-[220px]" title={candidate.title}>
+                                {candidate.title}
+                              </div>
+                              {candidate.domain_relevance === "Highly Relevant" && (
+                                <span className="shrink-0 px-1.5 py-0.2 rounded-md text-[9px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                                  IT Core
+                                </span>
+                              )}
+                              {candidate.domain_relevance === "Relevant" && (
+                                <span className="shrink-0 px-1.5 py-0.2 rounded-md text-[9px] font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                                  Relevant
+                                </span>
+                              )}
+                              {candidate.domain_relevance === "Partially Relevant" && (
+                                <span className="shrink-0 px-1.5 py-0.2 rounded-md text-[9px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                                  Partial
+                                </span>
+                              )}
+                              {candidate.domain_relevance === "Not Relevant" && (
+                                <span title="Academic / Non-IT Domain" className="shrink-0 px-1.5 py-0.2 rounded-md text-[9px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+                                  Non-IT
+                                </span>
+                              )}
                             </div>
-                            <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{candidate.company}</div>
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-[220px]" title={candidate.company}>
+                              {candidate.company}
+                            </div>
+                          </td>
+
+                          {/* Target Role Requisition */}
+                          <td className="py-3.5 px-4 whitespace-nowrap">
+                            <span
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-slate-100 text-slate-700 dark:bg-slate-800/80 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700/60 max-w-[150px] truncate"
+                              title={candidate.target_role || "General"}
+                            >
+                              <Briefcase className="h-2.5 w-2.5 text-indigo-500 shrink-0" />
+                              <span className="truncate">{candidate.target_role || "General Requisition"}</span>
+                            </span>
                           </td>
 
                           {/* Skills Match */}
                           <td className="py-3.5 px-4 whitespace-nowrap">
-                            <div className="flex items-center gap-2.5">
-                              <span className="font-extrabold text-slate-800 dark:text-slate-200 text-xs w-7">{candidate.skill_match}%</span>
-                              <div className="w-16 sm:w-20 bg-slate-100 dark:bg-[#16203a] h-1.5 rounded-full overflow-hidden shrink-0">
-                                <div
-                                  className="h-full rounded-full bg-gradient-to-r from-teal-400 to-emerald-500"
-                                  style={{ width: `${candidate.skill_match}%` }}
-                                />
+                            {candidate.skill_match != null ? (
+                              <div className="flex items-center gap-2.5">
+                                <span className="font-extrabold text-slate-800 dark:text-slate-200 text-xs w-7">{candidate.skill_match}%</span>
+                                <div className="w-16 sm:w-20 bg-slate-100 dark:bg-[#16203a] h-1.5 rounded-full overflow-hidden shrink-0">
+                                  <div
+                                    className="h-full rounded-full bg-gradient-to-r from-teal-400 to-emerald-500"
+                                    style={{ width: `${candidate.skill_match}%` }}
+                                  />
+                                </div>
                               </div>
-                            </div>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800/60">
+                                Pending Eval
+                              </span>
+                            )}
                           </td>
 
                           {/* Evidence Status Pill */}
@@ -1741,6 +2659,12 @@ export default function Home() {
                             {candidate.evidence_status === "Not Verified" && (
                               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500 dark:bg-slate-700/30 dark:text-slate-400 border border-slate-200 dark:border-slate-700/50">
                                 Not Verified
+                              </span>
+                            )}
+                            {(candidate.evidence_status === "Pending Review" || candidate.skill_match == null) && (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 border border-slate-200 dark:border-slate-700/50">
+                                <Clock className="h-3 w-3" />
+                                Pending Review
                               </span>
                             )}
                           </td>
@@ -1793,6 +2717,13 @@ export default function Home() {
                                 Review
                               </button>
                               <button
+                                onClick={() => handleDeleteCandidate(candidate.id)}
+                                className="h-7 w-7 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 flex items-center justify-center transition-colors cursor-pointer"
+                                title="Delete candidate from shortlist and database"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                              <button
                                 onClick={() => handleUpdateStatus(candidate.id, candidate.status === "Shortlisted" ? "New" : "Shortlisted")}
                                 className="h-7 w-7 rounded-lg text-slate-400 hover:text-slate-600 flex items-center justify-center"
                               >
@@ -1817,7 +2748,7 @@ export default function Home() {
                     Job Description Summary
                   </h3>
                   <button
-                    onClick={() => setIsJdEditorOpen(true)}
+                    onClick={() => handleOpenWizard(1)}
                     className="flex items-center gap-1 text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 font-bold transition-colors"
                   >
                     <Edit3 className="h-3 w-3" />
@@ -1827,34 +2758,40 @@ export default function Home() {
 
                 <div>
                   <div className="flex items-center gap-2 mb-2">
-                    <h4 className="text-base font-black text-slate-900 dark:text-white">{currentRole.title}</h4>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
-                      Active
-                    </span>
+                    <h4 className="text-base font-black text-slate-900 dark:text-white">
+                      {jobRequirements.jobTitle || "No Target Role Configured"}
+                    </h4>
+                    {jobRequirements.jobTitle && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
+                        Active
+                      </span>
+                    )}
                   </div>
 
                   {/* Metadata Chips */}
                   <div className="flex flex-wrap gap-1.5 text-xs text-slate-600 dark:text-slate-300 mb-3.5">
                     <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-[#131a2e] border border-slate-200/80 dark:border-[#1c2744] text-[11px]">
                       <Briefcase className="h-3 w-3 text-slate-400" />
-                      {currentRole.department || "Engineering"}
+                      {jobRequirements.department || "Engineering"}
                     </span>
                     <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-[#131a2e] border border-slate-200/80 dark:border-[#1c2744] text-[11px]">
                       <Clock className="h-3 w-3 text-slate-400" />
-                      {currentRole.type || "Full-time"}
+                      {jobRequirements.employmentType || "Full-time"}
                     </span>
                     <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-[#131a2e] border border-slate-200/80 dark:border-[#1c2744] text-[11px]">
                       <Award className="h-3 w-3 text-slate-400" />
-                      {currentRole.experience || "5+ years"}
+                      {jobRequirements.minExperience}+ years
                     </span>
                     <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-[#131a2e] border border-slate-200/80 dark:border-[#1c2744] text-[11px]">
                       <MapPin className="h-3 w-3 text-slate-400" />
-                      {currentRole.location || "Remote / Hybrid"}
+                      {jobRequirements.workMode || "Remote"}
                     </span>
-                    <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-[#131a2e] border border-slate-200/80 dark:border-[#1c2744] text-[11px]">
-                      <Globe className="h-3 w-3 text-slate-400" />
-                      {currentRole.region || "UAE / India"}
-                    </span>
+                    {(jobRequirements.city || jobRequirements.country) && (
+                      <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-[#131a2e] border border-slate-200/80 dark:border-[#1c2744] text-[11px]">
+                        <Globe className="h-3 w-3 text-slate-400" />
+                        {[jobRequirements.city, jobRequirements.country].filter(Boolean).join(", ")}
+                      </span>
+                    )}
                   </div>
 
                   {/* Key Requirements Tags */}
@@ -1863,14 +2800,18 @@ export default function Home() {
                       Key Requirements
                     </h5>
                     <div className="flex flex-wrap gap-1.5">
-                      {currentRole.requirements.map((req, i) => (
-                        <span
-                          key={i}
-                          className="px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-[#141c33] border border-slate-200 dark:border-[#1e2a4a] text-slate-700 dark:text-slate-300 text-[11px] font-semibold"
-                        >
-                          {req}
-                        </span>
-                      ))}
+                      {jobRequirements.mandatorySkills && jobRequirements.mandatorySkills.length > 0 ? (
+                        jobRequirements.mandatorySkills.map((req, i) => (
+                          <span
+                            key={i}
+                            className="px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-[#141c33] border border-slate-200 dark:border-[#1e2a4a] text-slate-700 dark:text-slate-300 text-[11px] font-semibold"
+                          >
+                            {req}
+                          </span>
+                        ))
+                      ) : (
+                        <p className="text-xs text-slate-400 italic">No skills configured. Launch Sourcing Wizard to set up criteria.</p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1895,32 +2836,38 @@ export default function Home() {
 
                 {/* Vertical Timeline Activity Items */}
                 <div className="space-y-3 relative before:absolute before:left-3 before:top-2 before:bottom-2 before:w-px before:bg-slate-200 dark:before:bg-[#192440]">
-                  {logs.slice(0, 6).map((log, i) => (
-                    <div key={i} className="flex items-start gap-2.5 relative pl-0.5">
-                      <div className="h-5 w-5 rounded-full bg-indigo-50 dark:bg-[#141c33] border border-indigo-200 dark:border-[#202c4b] flex items-center justify-center shrink-0 z-10 text-indigo-600 dark:text-indigo-400">
-                        {log.icon === "search" ? (
-                          <Search className="h-2.5 w-2.5" />
-                        ) : log.icon === "shield" ? (
-                          <ShieldCheck className="h-2.5 w-2.5 text-emerald-500" />
-                        ) : (
-                          <FileText className="h-2.5 w-2.5 text-blue-500" />
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between text-[10px] text-slate-400 mb-0.5">
-                          <span>{log.time}</span>
-                        </div>
-                        <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-snug break-words font-medium">{log.text}</p>
-                      </div>
+                  {logs.length === 0 ? (
+                    <div className="py-6 text-center text-xs text-slate-400 italic">
+                      No activity recorded yet. Run a sourcing session to see live agent telemetry.
                     </div>
-                  ))}
+                  ) : (
+                    logs.slice(0, 6).map((log, i) => (
+                      <div key={i} className="flex items-start gap-2.5 relative pl-0.5">
+                        <div className="h-5 w-5 rounded-full bg-indigo-50 dark:bg-[#141c33] border border-indigo-200 dark:border-[#202c4b] flex items-center justify-center shrink-0 z-10 text-indigo-600 dark:text-indigo-400">
+                          {log.icon === "search" ? (
+                            <Search className="h-2.5 w-2.5" />
+                          ) : log.icon === "shield" ? (
+                            <ShieldCheck className="h-2.5 w-2.5 text-emerald-500" />
+                          ) : (
+                            <FileText className="h-2.5 w-2.5 text-blue-500" />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between text-[10px] text-slate-400 mb-0.5">
+                            <span>{log.time}</span>
+                          </div>
+                          <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-snug break-words font-medium">{log.text}</p>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
 
                 <button
-                  onClick={() => setIsSourcingModalOpen(true)}
+                  onClick={() => { setIsWizardOpen(true); setWizardStep(3); }}
                   className="w-full text-center py-2 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 transition-colors flex items-center justify-center gap-1 pt-2 border-t border-slate-100 dark:border-[#151f38]"
                 >
-                  View Full Activity Log <ArrowRight className="h-3 w-3" />
+                  Open Live Sourcing View <ArrowRight className="h-3 w-3" />
                 </button>
               </div>
             </div>
@@ -1928,700 +2875,1247 @@ export default function Home() {
         </main>
       </div>
 
-      {/* -------------------- 4. MODAL: SOURCING RUN LAUNCHER -------------------- */}
-      {isSourcingModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
-          <div className="w-full max-w-2xl bg-white dark:bg-[#0d1222] border border-slate-200 dark:border-[#1f2b47] rounded-3xl shadow-2xl overflow-hidden flex flex-col transition-all duration-300 max-h-[90vh] overflow-y-auto">
-            {/* Modal Header */}
-            <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-[#18233c] flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-white shadow-md shadow-indigo-500/20">
-                  {sessionState === "waiting_for_login" ? (
-                    <ShieldCheck className="h-5 w-5" />
-                  ) : (
-                    <Play className="h-4 w-4 fill-white" />
-                  )}
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-black text-slate-900 dark:text-white">
-                      {sessionState === "waiting_for_login" ? "Recruiter Safe Handover Mode" : "Execute Sourcing Run"}
-                    </h3>
-                    {sessionState === "waiting_for_login" && (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300">
-                        {browserChannel === "msedge" ? "Edge Live" : browserChannel === "chrome" ? "Chrome Live" : "Chromium Live"}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    {sessionState === "waiting_for_login" ? "Human-in-the-Loop Safe LinkedIn Authentication" : "Playwright Browser Automation & Gemini AI"}
-                  </p>
-                </div>
+      {/* -------------------- DEDICATED 3-STEP AI SOURCING WIZARD -------------------- */}
+      {isWizardOpen && (
+        <div className="fixed inset-0 z-50 bg-[#f8fafc] dark:bg-[#070b14] flex flex-col overflow-hidden animate-in fade-in duration-200">
+          {/* Wizard Top Header Bar */}
+          <header className="h-16 px-6 lg:px-10 border-b border-slate-200/80 dark:border-[#151e36] bg-white/95 dark:bg-[#0a0f1e]/95 backdrop-blur sticky top-0 z-30 flex items-center justify-between shrink-0 shadow-xs">
+            {/* Left: Branding & Role context */}
+            <div className="flex items-center gap-3">
+              <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-white shadow-md shadow-indigo-500/25">
+                <Sparkles className="h-4 w-4" />
               </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-black text-slate-900 dark:text-white tracking-tight">Hiring Desk</h2>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                    AI Sourcing Wizard
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {jobRequirements.jobTitle ? (
+                    <span className="flex items-center gap-1 font-semibold text-slate-700 dark:text-slate-300">
+                      <Briefcase className="h-3 w-3 text-indigo-500" />
+                      Role: <strong className="text-indigo-600 dark:text-indigo-400">{jobRequirements.jobTitle}</strong>
+                    </span>
+                  ) : (
+                    "Dynamic 3-Step Candidate Discovery & Live Browser Automation"
+                  )}
+                </p>
+              </div>
+            </div>
+
+            {/* Center: Stepper Progress Indicator */}
+            <div className="hidden md:flex items-center gap-2">
+              {[
+                { step: 1, title: "1. Job Requirements", icon: FileText },
+                { step: 2, title: "2. AI Search Queries", icon: Sparkles },
+                { step: 3, title: "3. Execution & Automation", icon: Play },
+              ].map((s, idx) => {
+                const isActive = wizardStep === s.step;
+                const isDone = wizardStep > s.step;
+                return (
+                  <div key={s.step} className="flex items-center">
+                    {idx > 0 && (
+                      <div className={`w-8 h-0.5 mx-1 transition-colors ${wizardStep >= s.step ? "bg-indigo-600 dark:bg-indigo-400" : "bg-slate-200 dark:bg-[#1c2742]"}`} />
+                    )}
+                    <button
+                      onClick={() => {
+                        if (s.step < wizardStep || (s.step === 2 && jobRequirements.jobTitle.trim())) {
+                          setWizardStep(s.step);
+                        }
+                      }}
+                      disabled={s.step > wizardStep && (!jobRequirements.jobTitle.trim() || strategicQueries.length === 0)}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                        isActive
+                          ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
+                          : isDone
+                          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+                          : "text-slate-400 bg-slate-100 dark:bg-[#12192e] border border-slate-200 dark:border-[#1e2a48]"
+                      }`}
+                    >
+                      <div className={`h-4 w-4 rounded-full flex items-center justify-center text-[10px] ${
+                        isActive ? "bg-white/20 text-white" : isDone ? "bg-emerald-600 text-white" : "bg-slate-200 dark:bg-slate-700 text-slate-500"
+                      }`}>
+                        {isDone ? <Check className="h-2.5 w-2.5" /> : s.step}
+                      </div>
+                      <span>{s.title}</span>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Right: Save Draft & Exit */}
+            <div className="flex items-center gap-2">
               <button
-                onClick={() => {
-                  if (sessionState === "waiting_for_login") {
-                    handleStopSourcing();
-                  } else {
-                    setIsSourcingModalOpen(false);
-                  }
-                }}
-                className="h-8 w-8 rounded-lg bg-slate-100 dark:bg-[#141b2e] text-slate-500 hover:text-slate-800 dark:hover:text-white flex items-center justify-center transition-colors cursor-pointer"
-                title="Close"
+                onClick={handleSaveDraft}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-[#1d2744] bg-white dark:bg-[#10172c] hover:bg-slate-50 text-xs font-semibold text-slate-700 dark:text-slate-300 transition-colors shadow-xs"
+              >
+                <Award className="h-3.5 w-3.5 text-indigo-500" />
+                <span>Save Draft</span>
+              </button>
+              <button
+                onClick={() => setIsWizardOpen(false)}
+                className="h-8 w-8 rounded-xl bg-slate-100 dark:bg-[#12192e] text-slate-500 hover:text-slate-800 dark:hover:text-white flex items-center justify-center transition-colors"
+                title="Exit to Dashboard"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
+          </header>
 
-            {/* Modal Content */}
-            <div className="p-5 sm:p-6 space-y-4">
-              {sessionState === "waiting_for_login" ? (
-                /* DEDICATED SINGLE-SOURCE RECRUITER SAFE HANDOVER MODE */
-                <div className="space-y-4 text-center py-1">
-                  {/* Shield & Orbit Graphic */}
-                  <div className="relative w-56 h-20 mx-auto flex items-center justify-center">
-                    <div className="absolute w-52 h-16 rounded-full border border-dashed border-indigo-300 dark:border-indigo-700/60 pointer-events-none" />
-                    <span className="absolute top-1 left-10 text-amber-400 font-black text-xs select-none">✦</span>
-                    <span className="absolute bottom-1 right-10 text-amber-400 font-black text-xs select-none">✦</span>
+          {/* Toast Notification for Save Draft */}
+          {draftSavedToast && (
+            <div className="fixed top-20 right-8 z-50 bg-emerald-600 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-xl flex items-center gap-2 animate-in fade-in">
+              <CheckCircle2 className="h-4 w-4" />
+              <span>Job requirements saved as draft!</span>
+            </div>
+          )}
 
-                    {/* LinkedIn Badge */}
-                    <div className="absolute left-2 top-4 w-9 h-9 rounded-xl bg-[#0A66C2] text-white flex items-center justify-center font-black text-base shadow-md shadow-sky-500/30 border-2 border-white dark:border-[#0c1222]">
-                      in
-                    </div>
-
-                    {/* Center Shield with Lock Icon */}
-                    <div className="w-16 h-16 rounded-full bg-indigo-500/10 dark:bg-indigo-500/20 flex items-center justify-center">
-                      <div className="w-11 h-12 rounded-xl bg-gradient-to-b from-[#6366f1] via-[#4f46e5] to-[#4338ca] text-white flex items-center justify-center shadow-lg shadow-indigo-600/40 border border-white/40">
-                        <Lock className="h-5 w-5 text-white stroke-[2.2]" />
-                      </div>
-                    </div>
-
-                    {/* Floating User Badge on Right */}
-                    <div className="absolute right-2 top-4 w-9 h-9 rounded-full bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-700 text-emerald-600 dark:text-emerald-300 flex items-center justify-center shadow-md shadow-emerald-500/20">
-                      <User className="h-4 w-4 stroke-[2.2]" />
-                    </div>
-                  </div>
-
+          {/* Wizard Scrollable Body */}
+          <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-8 lg:px-14 max-w-6xl w-full mx-auto pb-32">
+            {/* ==================== STEP 1: JOB REQUIREMENTS INPUT ==================== */}
+            {wizardStep === 1 && (
+              <div className="space-y-6 animate-in fade-in duration-150">
+                {/* Step 1 Header & Mode Selector */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-[#18233c]">
                   <div>
-                    <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white tracking-tight">
-                      Recruiter <span className="bg-gradient-to-r from-purple-600 to-indigo-600 bg-clip-text text-transparent">Safe Handover</span> Mode
+                    <h3 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
+                      Step 1: Job Requirements Input
                     </h3>
-                    <p className="text-[12px] text-slate-500 dark:text-slate-400 max-w-md mx-auto mt-1 leading-relaxed">
-                      To keep your LinkedIn account safe from automated bot detection, please sign in to LinkedIn manually in the opened browser window.
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                      Provide role criteria manually or upload a Job Description document. No predefined roles required.
                     </p>
                   </div>
 
-                  {/* 4 Step Cards */}
-                  <div className="space-y-2 text-left max-w-lg mx-auto">
-                    {/* Step 1 */}
-                    <div className="flex items-center gap-3 p-2.5 sm:p-3 rounded-xl bg-slate-50/80 dark:bg-[#131b2e] border border-slate-100 dark:border-[#1e293b] hover:border-slate-200 transition-colors">
-                      <div className="w-6 h-6 rounded-full bg-purple-100 dark:bg-purple-950/60 text-purple-600 dark:text-purple-300 font-extrabold text-[11px] flex items-center justify-center shrink-0">
-                        1
-                      </div>
-                      <div className="w-7 h-7 rounded-lg bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-300 flex items-center justify-center shrink-0">
-                        <ExternalLink className="h-3.5 w-3.5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">
-                          Open LinkedIn in the dedicated agent browser
-                        </h4>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-                          Your dedicated {browserChannel === "msedge" ? "Edge" : browserChannel === "chrome" ? "Chrome" : "Chromium"} browser is open at{" "}
-                          <a
-                            href="https://www.linkedin.com"
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-sky-600 dark:text-sky-400 font-semibold underline"
-                          >
-                            https://www.linkedin.com
-                          </a>{" "}
-                          (or click Open LinkedIn ↗ below).
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Step 2 */}
-                    <div className="flex items-center gap-3 p-2.5 sm:p-3 rounded-xl bg-slate-50/80 dark:bg-[#131b2e] border border-slate-100 dark:border-[#1e293b] hover:border-slate-200 transition-colors">
-                      <div className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-300 font-extrabold text-[11px] flex items-center justify-center shrink-0">
-                        2
-                      </div>
-                      <div className="w-7 h-7 rounded-lg bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-300 flex items-center justify-center shrink-0">
-                        <User className="h-3.5 w-3.5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">
-                          Sign in inside that opened browser window
-                        </h4>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-                          Please enter your credentials inside the agent's opened browser window (not your personal desktop Chrome). Your session will be saved in this profile for future runs.
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Step 3 */}
-                    <div className="flex items-center gap-3 p-2.5 sm:p-3 rounded-xl bg-slate-50/80 dark:bg-[#131b2e] border border-slate-100 dark:border-[#1e293b] hover:border-slate-200 transition-colors">
-                      <div className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-300 font-extrabold text-[11px] flex items-center justify-center shrink-0">
-                        3
-                      </div>
-                      <div className="w-7 h-7 rounded-lg bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-300 flex items-center justify-center shrink-0">
-                        <HomeIcon className="h-3.5 w-3.5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">
-                          Ensure your LinkedIn home screen is loaded
-                        </h4>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-                          Verify that you can see your LinkedIn feed or home page after signing in.
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Step 4 */}
-                    <div className="flex items-center gap-3 p-2.5 sm:p-3 rounded-xl bg-slate-50/80 dark:bg-[#131b2e] border border-slate-100 dark:border-[#1e293b] hover:border-slate-200 transition-colors">
-                      <div className="w-6 h-6 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-300 font-extrabold text-[11px] flex items-center justify-center shrink-0">
-                        4
-                      </div>
-                      <div className="w-7 h-7 rounded-lg bg-rose-50 dark:bg-rose-900/30 text-rose-600 dark:text-rose-300 flex items-center justify-center shrink-0">
-                        <ArrowLeft className="h-3.5 w-3.5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <h4 className="text-xs font-bold text-slate-900 dark:text-white">
-                          Return to Hiring Desk
-                        </h4>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-                          Once you are signed in, come back to this page and click &ldquo;I&apos;ve Logged In — Continue&rdquo;.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* AI Screen Verification Feedback Alert */}
-                  {(verificationFeedback || sessionError) && (
-                    <div
-                      className={`p-3 rounded-xl text-left border flex items-start gap-2.5 transition-all max-w-lg mx-auto ${
-                        (verificationFeedback?.type === "error" || sessionError)
-                          ? "bg-rose-500/10 border-rose-500/40 text-rose-900 dark:text-rose-200"
-                          : "bg-emerald-500/10 border-emerald-500/40 text-emerald-900 dark:text-emerald-200"
+                  {/* Option A / Option B Tabs */}
+                  <div className="flex items-center p-1 bg-slate-100 dark:bg-[#10172c] rounded-2xl border border-slate-200 dark:border-[#1c2742] shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setActiveOptionTab("manual")}
+                      className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                        activeOptionTab === "manual"
+                          ? "bg-white dark:bg-indigo-600 text-slate-900 dark:text-white shadow-xs"
+                          : "text-slate-500 dark:text-slate-400 hover:text-slate-900"
                       }`}
                     >
-                      {(verificationFeedback?.type === "error" || sessionError) ? (
-                        <AlertCircle className="h-4 w-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
-                      ) : (
-                        <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-                      )}
-                      <div className="space-y-0.5 text-xs flex-1">
-                        <div className="font-extrabold text-xs">
-                          {verificationFeedback?.title || "⚠️ Login Verification Required"}
-                        </div>
-                        <p className="leading-snug opacity-95 text-[11px]">
-                          {verificationFeedback?.message || sessionError}
-                        </p>
-                        {verificationFeedback?.screenTitle && (
-                          <div className="text-[10px] font-mono bg-white/70 dark:bg-black/30 px-2 py-0.5 rounded inline-block border border-rose-200 dark:border-rose-900/50 mt-1">
-                            Screen Detected by AI Agent: &quot;{verificationFeedback.screenTitle}&quot;
+                      <Edit3 className="h-3.5 w-3.5 text-indigo-500" />
+                      <span>Option A: Manual Entry</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveOptionTab("upload")}
+                      className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                        activeOptionTab === "upload"
+                          ? "bg-white dark:bg-indigo-600 text-slate-900 dark:text-white shadow-xs"
+                          : "text-slate-500 dark:text-slate-400 hover:text-slate-900"
+                      }`}
+                    >
+                      <Upload className="h-3.5 w-3.5 text-indigo-500" />
+                      <span>Option B: Upload JD Document</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Validation Error Banner */}
+                {step1ValidationError && (
+                  <div className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 flex items-center gap-2.5 text-xs text-rose-700 dark:text-rose-300">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>{step1ValidationError}</span>
+                  </div>
+                )}
+
+                {/* Option B Document Upload Area */}
+                {activeOptionTab === "upload" && (
+                  <div className="p-6 rounded-2xl bg-white dark:bg-[#0c1222] border-2 border-dashed border-indigo-200 dark:border-indigo-800/60 shadow-xs space-y-4">
+                    <div className="max-w-xl mx-auto text-center space-y-3">
+                      <div className="h-12 w-12 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mx-auto shadow-xs">
+                        <Upload className="h-6 w-6" />
+                      </div>
+                      <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                        Upload Job Description Document
+                      </h4>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Supported formats: <strong>PDF, DOC, DOCX, TXT</strong>. AI parses the document and automatically populates all structured form fields below for your review.
+                      </p>
+
+                      <label className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/25 cursor-pointer transition-all">
+                        <FileText className="h-4 w-4" />
+                        <span>Browse Document</span>
+                        <input
+                          type="file"
+                          accept=".pdf,.docx,.doc,.txt"
+                          onChange={(e) => {
+                            if (e.target.files && e.target.files[0]) {
+                              handleDocumentUpload(e.target.files[0]);
+                            }
+                          }}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+
+                    {/* Upload / Progress Feedback */}
+                    {uploadedFile && (
+                      <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#11192e] border border-slate-200 dark:border-[#1d2946] flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="h-8 w-8 rounded-lg bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold text-xs">
+                            {uploadedFile.type}
                           </div>
+                          <div>
+                            <div className="text-xs font-bold text-slate-900 dark:text-white">{uploadedFile.name}</div>
+                            <div className="text-[10px] text-slate-400">{uploadedFile.size} · Uploaded & Auto-Populated</div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setUploadedFile(null)}
+                          className="text-xs font-semibold text-rose-500 hover:text-rose-600 px-2 py-1 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    )}
+
+                    {uploadingJd && (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">
+                          <span className="flex items-center gap-1.5">
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                            Extracting text and identifying structured requirements...
+                          </span>
+                          <span>{uploadProgress}%</span>
+                        </div>
+                        <div className="h-1.5 w-full bg-slate-100 dark:bg-[#141d33] rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-indigo-500 to-purple-600 transition-all duration-300"
+                            style={{ width: `${uploadProgress}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Structured Form Sections (A through E) */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  {/* Section A: Job Information */}
+                  <div className="p-5 rounded-2xl bg-white dark:bg-[#0d1222] border border-slate-200/80 dark:border-[#172138] shadow-xs space-y-3.5 md:col-span-2">
+                    <div className="flex items-center gap-2 pb-1 border-b border-slate-100 dark:border-[#151f38]">
+                      <Briefcase className="h-4 w-4 text-indigo-500" />
+                      <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                        A. Job Information
+                      </h4>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                      <div className="sm:col-span-2">
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                          Job Title / Role <span className="text-rose-500">* (Mandatory)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={jobRequirements.jobTitle}
+                          onChange={(e) => setJobRequirements({ ...jobRequirements, jobTitle: e.target.value })}
+                          placeholder="e.g. Senior AI Engineer, Lead Fullstack Developer, Product Manager"
+                          className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] text-xs font-medium rounded-xl px-3 py-2 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                          Department
+                        </label>
+                        <input
+                          type="text"
+                          value={jobRequirements.department}
+                          onChange={(e) => setJobRequirements({ ...jobRequirements, department: e.target.value })}
+                          placeholder="e.g. Engineering, AI Labs"
+                          className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] text-xs font-medium rounded-xl px-3 py-2 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                          Employment Type
+                        </label>
+                        <select
+                          value={jobRequirements.employmentType}
+                          onChange={(e) => setJobRequirements({ ...jobRequirements, employmentType: e.target.value })}
+                          className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] text-xs font-medium rounded-xl px-3 py-2 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                        >
+                          <option value="Full-time">Full-time</option>
+                          <option value="Part-time">Part-time</option>
+                          <option value="Contract">Contract</option>
+                          <option value="Internship">Internship</option>
+                          <option value="Consulting">Consulting</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                          Seniority Level
+                        </label>
+                        <select
+                          value={jobRequirements.seniorityLevel}
+                          onChange={(e) => setJobRequirements({ ...jobRequirements, seniorityLevel: e.target.value })}
+                          className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] text-xs font-medium rounded-xl px-3 py-2 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                        >
+                          <option value="Entry Level">Entry Level</option>
+                          <option value="Mid-Level">Mid-Level</option>
+                          <option value="Senior">Senior</option>
+                          <option value="Staff / Principal">Staff / Principal</option>
+                          <option value="Lead / Manager">Lead / Manager</option>
+                          <option value="Executive">Executive</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                          Vacancies
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={jobRequirements.vacancies}
+                          onChange={(e) => setJobRequirements({ ...jobRequirements, vacancies: parseInt(e.target.value) || 1 })}
+                          className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] text-xs font-medium rounded-xl px-3 py-2 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-3">
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                          Full Job Description / Context
+                        </label>
+                        <textarea
+                          rows={4}
+                          value={jobRequirements.jobDescription}
+                          onChange={(e) => setJobRequirements({ ...jobRequirements, jobDescription: e.target.value })}
+                          placeholder="Paste or describe role expectations, team mission, and core responsibilities..."
+                          className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] text-xs font-medium rounded-xl p-3 text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-indigo-500 leading-relaxed"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section B: Required Skills & Technologies */}
+                  <div className="p-5 rounded-2xl bg-white dark:bg-[#0d1222] border border-slate-200/80 dark:border-[#172138] shadow-xs space-y-3.5 md:col-span-2">
+                    <div className="flex items-center gap-2 pb-1 border-b border-slate-100 dark:border-[#151f38]">
+                      <Sparkles className="h-4 w-4 text-purple-500" />
+                      <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                        B. Required Skills & Technologies (Interactive Chips)
+                      </h4>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <TagInputField
+                        label="Mandatory Skills (Must Have)"
+                        tags={jobRequirements.mandatorySkills}
+                        onAdd={(tag) => setJobRequirements({ ...jobRequirements, mandatorySkills: [...jobRequirements.mandatorySkills, tag] })}
+                        onRemove={(idx) => setJobRequirements({ ...jobRequirements, mandatorySkills: jobRequirements.mandatorySkills.filter((_, i) => i !== idx) })}
+                        placeholder="e.g. Python, React, FastAPI..."
+                      />
+
+                      <TagInputField
+                        label="Preferred Skills (Good to Have)"
+                        tags={jobRequirements.preferredSkills}
+                        onAdd={(tag) => setJobRequirements({ ...jobRequirements, preferredSkills: [...jobRequirements.preferredSkills, tag] })}
+                        onRemove={(idx) => setJobRequirements({ ...jobRequirements, preferredSkills: jobRequirements.preferredSkills.filter((_, i) => i !== idx) })}
+                        placeholder="e.g. Playwright, WebSockets, Docker..."
+                      />
+
+                      <TagInputField
+                        label="Technologies & Frameworks"
+                        tags={jobRequirements.technologies}
+                        onAdd={(tag) => setJobRequirements({ ...jobRequirements, technologies: [...jobRequirements.technologies, tag] })}
+                        onRemove={(idx) => setJobRequirements({ ...jobRequirements, technologies: jobRequirements.technologies.filter((_, i) => i !== idx) })}
+                        placeholder="e.g. Next.js, PyTorch, LangChain..."
+                      />
+
+                      <TagInputField
+                        label="Tools & Platforms"
+                        tags={jobRequirements.toolsPlatforms}
+                        onAdd={(tag) => setJobRequirements({ ...jobRequirements, toolsPlatforms: [...jobRequirements.toolsPlatforms, tag] })}
+                        onRemove={(idx) => setJobRequirements({ ...jobRequirements, toolsPlatforms: jobRequirements.toolsPlatforms.filter((_, i) => i !== idx) })}
+                        placeholder="e.g. AWS, Git, Redis, Jira..."
+                      />
+
+                      <TagInputField
+                        label="Domain Expertise"
+                        tags={jobRequirements.domainExpertise}
+                        onAdd={(tag) => setJobRequirements({ ...jobRequirements, domainExpertise: [...jobRequirements.domainExpertise, tag] })}
+                        onRemove={(idx) => setJobRequirements({ ...jobRequirements, domainExpertise: jobRequirements.domainExpertise.filter((_, i) => i !== idx) })}
+                        placeholder="e.g. LLM Orchestration, FinTech, E-Commerce..."
+                      />
+
+                      <TagInputField
+                        label="Certifications (Optional)"
+                        tags={jobRequirements.certifications}
+                        onAdd={(tag) => setJobRequirements({ ...jobRequirements, certifications: [...jobRequirements.certifications, tag] })}
+                        onRemove={(idx) => setJobRequirements({ ...jobRequirements, certifications: jobRequirements.certifications.filter((_, i) => i !== idx) })}
+                        placeholder="e.g. AWS Solutions Architect, CKA..."
+                      />
+                    </div>
+                  </div>
+
+                  {/* Section C: Experience Requirements */}
+                  <div className="p-5 rounded-2xl bg-white dark:bg-[#0d1222] border border-slate-200/80 dark:border-[#172138] shadow-xs space-y-3.5">
+                    <div className="flex items-center gap-2 pb-1 border-b border-slate-100 dark:border-[#151f38]">
+                      <Clock className="h-4 w-4 text-emerald-500" />
+                      <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                        C. Experience Requirements
+                      </h4>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                          Min Experience (Yrs)
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={jobRequirements.minExperience}
+                          onChange={(e) => setJobRequirements({ ...jobRequirements, minExperience: parseInt(e.target.value) || 0 })}
+                          className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] text-xs font-medium rounded-xl px-3 py-2 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                          Max Experience (Yrs)
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={jobRequirements.maxExperience}
+                          onChange={(e) => setJobRequirements({ ...jobRequirements, maxExperience: parseInt(e.target.value) || 0 })}
+                          className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] text-xs font-medium rounded-xl px-3 py-2 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+
+                      <div className="col-span-2">
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                          Relevant Experience Focus
+                        </label>
+                        <input
+                          type="text"
+                          value={jobRequirements.relevantExperience}
+                          onChange={(e) => setJobRequirements({ ...jobRequirements, relevantExperience: e.target.value })}
+                          placeholder="e.g. 3+ years hands-on building autonomous agents"
+                          className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] text-xs font-medium rounded-xl px-3 py-2 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+
+                      <div className="col-span-2">
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                          Leadership Experience (Optional)
+                        </label>
+                        <input
+                          type="text"
+                          value={jobRequirements.leadershipExperience}
+                          onChange={(e) => setJobRequirements({ ...jobRequirements, leadershipExperience: e.target.value })}
+                          placeholder="e.g. Experience mentoring 3+ engineers or tech lead role"
+                          className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] text-xs font-medium rounded-xl px-3 py-2 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section D: Location Requirements */}
+                  <div className="p-5 rounded-2xl bg-white dark:bg-[#0d1222] border border-slate-200/80 dark:border-[#172138] shadow-xs space-y-3.5">
+                    <div className="flex items-center gap-2 pb-1 border-b border-slate-100 dark:border-[#151f38]">
+                      <MapPin className="h-4 w-4 text-sky-500" />
+                      <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                        D. Location Requirements
+                      </h4>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                          Work Mode
+                        </label>
+                        <select
+                          value={jobRequirements.workMode}
+                          onChange={(e) => setJobRequirements({ ...jobRequirements, workMode: e.target.value })}
+                          className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] text-xs font-medium rounded-xl px-3 py-2 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                        >
+                          <option value="Remote">Remote</option>
+                          <option value="Hybrid">Hybrid</option>
+                          <option value="On-site">On-site</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                          Country
+                        </label>
+                        <input
+                          type="text"
+                          value={jobRequirements.country}
+                          onChange={(e) => setJobRequirements({ ...jobRequirements, country: e.target.value })}
+                          placeholder="e.g. India, UAE, United States"
+                          className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] text-xs font-medium rounded-xl px-3 py-2 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                          City
+                        </label>
+                        <input
+                          type="text"
+                          value={jobRequirements.city}
+                          onChange={(e) => setJobRequirements({ ...jobRequirements, city: e.target.value })}
+                          placeholder="e.g. Bangalore, Dubai, London"
+                          className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] text-xs font-medium rounded-xl px-3 py-2 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                          State / Region
+                        </label>
+                        <input
+                          type="text"
+                          value={jobRequirements.stateRegion}
+                          onChange={(e) => setJobRequirements({ ...jobRequirements, stateRegion: e.target.value })}
+                          placeholder="e.g. Karnataka, Dubai Emirates"
+                          className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] text-xs font-medium rounded-xl px-3 py-2 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+
+                      <div className="col-span-2">
+                        <TagInputField
+                          label="Preferred Work Locations"
+                          tags={jobRequirements.preferredLocations}
+                          onAdd={(tag) => setJobRequirements({ ...jobRequirements, preferredLocations: [...jobRequirements.preferredLocations, tag] })}
+                          onRemove={(idx) => setJobRequirements({ ...jobRequirements, preferredLocations: jobRequirements.preferredLocations.filter((_, i) => i !== idx) })}
+                          placeholder="e.g. Bangalore, Hyderabad, Pune..."
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section E: Additional Hiring Preferences */}
+                  <div className="p-5 rounded-2xl bg-white dark:bg-[#0d1222] border border-slate-200/80 dark:border-[#172138] shadow-xs space-y-3.5 md:col-span-2">
+                    <div className="flex items-center gap-2 pb-1 border-b border-slate-100 dark:border-[#151f38]">
+                      <SlidersHorizontal className="h-4 w-4 text-amber-500" />
+                      <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                        E. Additional Hiring Preferences
+                      </h4>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                          Notice Period
+                        </label>
+                        <select
+                          value={jobRequirements.noticePeriod}
+                          onChange={(e) => setJobRequirements({ ...jobRequirements, noticePeriod: e.target.value })}
+                          className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] text-xs font-medium rounded-xl px-3 py-2 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                        >
+                          <option value="Immediate">Immediate</option>
+                          <option value="15 Days">15 Days</option>
+                          <option value="30 Days">30 Days</option>
+                          <option value="60 Days">60 Days</option>
+                          <option value="90 Days">90 Days</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                          Expected Salary Range (Optional)
+                        </label>
+                        <input
+                          type="text"
+                          value={jobRequirements.salaryRange}
+                          onChange={(e) => setJobRequirements({ ...jobRequirements, salaryRange: e.target.value })}
+                          placeholder="e.g. $120k - $160k, ₹30L - ₹45L"
+                          className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] text-xs font-medium rounded-xl px-3 py-2 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                          Education Requirements
+                        </label>
+                        <input
+                          type="text"
+                          value={jobRequirements.educationRequirements}
+                          onChange={(e) => setJobRequirements({ ...jobRequirements, educationRequirements: e.target.value })}
+                          placeholder="e.g. B.Tech / M.Tech in CS or related"
+                          className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] text-xs font-medium rounded-xl px-3 py-2 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-3 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <TagInputField
+                          label="Companies to Target (Optional)"
+                          tags={jobRequirements.companiesToTarget}
+                          onAdd={(tag) => setJobRequirements({ ...jobRequirements, companiesToTarget: [...jobRequirements.companiesToTarget, tag] })}
+                          onRemove={(idx) => setJobRequirements({ ...jobRequirements, companiesToTarget: jobRequirements.companiesToTarget.filter((_, i) => i !== idx) })}
+                          placeholder="e.g. Google, Microsoft, Razorpay..."
+                        />
+
+                        <TagInputField
+                          label="Companies to Exclude (Optional)"
+                          tags={jobRequirements.companiesToExclude}
+                          onAdd={(tag) => setJobRequirements({ ...jobRequirements, companiesToExclude: [...jobRequirements.companiesToExclude, tag] })}
+                          onRemove={(idx) => setJobRequirements({ ...jobRequirements, companiesToExclude: jobRequirements.companiesToExclude.filter((_, i) => i !== idx) })}
+                          placeholder="e.g. Current client companies..."
+                        />
+                      </div>
+
+                      <div className="sm:col-span-3">
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                          Additional Instructions for AI Query & Extraction Agent
+                        </label>
+                        <input
+                          type="text"
+                          value={jobRequirements.additionalInstructions}
+                          onChange={(e) => setJobRequirements({ ...jobRequirements, additionalInstructions: e.target.value })}
+                          placeholder="e.g. Favor candidates with open source contributions; strictly reject agency resumes..."
+                          className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] text-xs font-medium rounded-xl px-3 py-2 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ==================== STEP 2: AI-GENERATED SEARCH QUERIES ==================== */}
+            {wizardStep === 2 && (
+              <div className="space-y-6 animate-in fade-in duration-150">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-[#18233c]">
+                  <div>
+                    <h3 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
+                      Step 2: AI-Generated LinkedIn Search Queries
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                      Gemini AI formulated 3 strategically distinct Boolean search queries tailored to your exact role requirements.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleRegenerateAllQueries}
+                    disabled={generatingQueries}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-100 dark:bg-[#131b31] border border-slate-200 dark:border-[#1d2745] hover:bg-slate-200 text-slate-700 dark:text-slate-200 text-xs font-bold transition-all disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 text-indigo-500 ${generatingQueries ? "animate-spin" : ""}`} />
+                    <span>Regenerate All Queries</span>
+                  </button>
+                </div>
+
+                {/* 3 Strategy Cards */}
+                <div className="space-y-4">
+                  {strategicQueries.map((q, idx) => {
+                    const isSelected = selectedQueryId === q.id;
+                    const isEditing = editingQueryId === q.id;
+                    const isRegenerating = regeneratingQueryId === q.id;
+
+                    return (
+                      <div
+                        key={q.id || idx}
+                        onClick={() => setSelectedQueryId(q.id)}
+                        className={`p-5 rounded-2xl border transition-all cursor-pointer ${
+                          isSelected
+                            ? "bg-indigo-50/40 dark:bg-indigo-950/20 border-indigo-500 shadow-md ring-2 ring-indigo-500/20"
+                            : "bg-white dark:bg-[#0d1222] border-slate-200/80 dark:border-[#172138] hover:border-slate-300 dark:hover:border-[#223052]"
+                        }`}
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-[#151f38]">
+                          <div className="flex items-center gap-3">
+                            <input
+                              type="radio"
+                              name="selected_strategic_query"
+                              checked={isSelected}
+                              onChange={() => setSelectedQueryId(q.id)}
+                              className="h-4 w-4 text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h4 className="text-sm font-black text-slate-900 dark:text-white">
+                                  {q.label}
+                                </h4>
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100/70 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-700">
+                                  {q.strategy_type || "AI Strategy"}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Individual Controls */}
+                          <div className="flex items-center gap-2 self-end sm:self-auto" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (isEditing) {
+                                  setStrategicQueries((prev) =>
+                                    prev.map((item) => (item.id === q.id ? { ...item, query: editedQueryText } : item))
+                                  );
+                                  setEditingQueryId(null);
+                                } else {
+                                  setEditingQueryId(q.id);
+                                  setEditedQueryText(q.query);
+                                }
+                              }}
+                              className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-[#12192e] text-slate-700 dark:text-slate-300 hover:bg-slate-200"
+                            >
+                              <Edit3 className="h-3 w-3" />
+                              <span>{isEditing ? "Save Query" : "Edit Query"}</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleRegenerateSingleQuery(q.id)}
+                              disabled={isRegenerating}
+                              className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 disabled:opacity-50"
+                            >
+                              <RefreshCw className={`h-3 w-3 ${isRegenerating ? "animate-spin" : ""}`} />
+                              <span>Regenerate</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Query Boolean String */}
+                        <div className="mt-3.5 space-y-2">
+                          {isEditing ? (
+                            <textarea
+                              rows={3}
+                              value={editedQueryText}
+                              onChange={(e) => setEditedQueryText(e.target.value)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-full p-3 rounded-xl bg-slate-900 text-emerald-400 font-mono text-xs border border-indigo-500 focus:outline-none"
+                            />
+                          ) : (
+                            <div className="p-3.5 rounded-xl bg-slate-900 text-emerald-400 font-mono text-xs border border-slate-800 break-words leading-relaxed select-all">
+                              {q.query}
+                            </div>
+                          )}
+
+                          {/* Strategy Explanation */}
+                          <div className="flex items-start gap-2 text-xs text-slate-600 dark:text-slate-300 pt-1">
+                            <Info className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
+                            <p className="leading-relaxed">{q.description}</p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ==================== STEP 3: EXECUTION & BROWSER AUTOMATION ==================== */}
+            {wizardStep === 3 && (
+              <div className="space-y-6 animate-in fade-in duration-150">
+                <div className="pb-4 border-b border-slate-200 dark:border-[#18233c]">
+                  <h3 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
+                    Step 3: Execution Configuration & Live Browser Automation
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    Select automation mode, target profile count, browser profile, and recruiter LinkedIn session.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  {/* SECTION A: SOURCING EXECUTION CONFIGURATION (5 cols) */}
+                  <div className="lg:col-span-5 space-y-4">
+                    <div className="p-5 rounded-2xl bg-white dark:bg-[#0d1222] border border-slate-200/80 dark:border-[#172138] shadow-xs space-y-4">
+                      <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-2">
+                        <SlidersHorizontal className="h-4 w-4 text-indigo-500" />
+                        <span>Execution Parameters</span>
+                      </h4>
+
+                      {/* 1. Execution Mode */}
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1.5">
+                          1. Execution Mode
+                        </label>
+                        <div className="grid grid-cols-1 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSearchMode("autonomous")}
+                            className={`p-3 rounded-xl border text-left transition-all ${
+                              searchMode === "autonomous"
+                                ? "bg-indigo-50/70 dark:bg-indigo-950/40 border-indigo-500 ring-2 ring-indigo-500/20"
+                                : "bg-slate-50 dark:bg-[#11192e] border-slate-200 dark:border-[#1d2946]"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-slate-900 dark:text-white">
+                                Mode A — Autonomous Sourcing
+                              </span>
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                                Direct
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+                              Automated Playwright traversal with intelligent pagination and AI scoring.
+                            </p>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setSearchMode("live")}
+                            className={`p-3 rounded-xl border text-left transition-all ${
+                              searchMode === "live"
+                                ? "bg-indigo-50/70 dark:bg-indigo-950/40 border-indigo-500 ring-2 ring-indigo-500/20"
+                                : "bg-slate-50 dark:bg-[#11192e] border-slate-200 dark:border-[#1d2946]"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-slate-900 dark:text-white">
+                                Mode B — Direct Live LinkedIn Sourcing
+                              </span>
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                                Headed
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+                              Opens visible desktop browser directly to LinkedIn with live screen inspection.
+                            </p>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 2. Target Profiles to Harvest */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300">
+                            2. Target Profiles to Harvest (1–50)
+                          </label>
+                          <span className="text-xs font-black text-indigo-600 dark:text-indigo-400">
+                            {maxResults} Profiles
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 mb-2">
+                          {[5, 10, 15, 25, 50].map((num) => (
+                            <button
+                              key={num}
+                              type="button"
+                              onClick={() => setMaxResults(num)}
+                              className={`flex-1 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                                maxResults === num
+                                  ? "bg-indigo-600 text-white shadow-xs"
+                                  : "bg-slate-100 dark:bg-[#11192e] text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-[#18233e]"
+                              }`}
+                            >
+                              {num}
+                            </button>
+                          ))}
+                          <div className="flex items-center gap-1 pl-1.5 border-l border-slate-200 dark:border-[#1d2744]">
+                            <span className="text-[10px] font-semibold text-slate-400">Custom:</span>
+                            <input
+                              type="number"
+                              min="1"
+                              max="50"
+                              value={maxResults}
+                              onChange={(e) => setMaxResults(Math.min(50, Math.max(1, parseInt(e.target.value) || 1)))}
+                              className="w-14 bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] text-xs font-bold text-center rounded-xl py-1 text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500"
+                            />
+                          </div>
+                        </div>
+                        <p className="text-[10px] text-slate-400">
+                          Est. ~{Math.max(1, Math.round(maxResults * 0.15))} min run with deep 7-section extraction and AI matching.
+                        </p>
+                      </div>
+
+                      {/* 3. Browser Selection */}
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1.5">
+                          3. Browser Selection
+                        </label>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          {[
+                            { id: "chrome", name: "Google Chrome", badge: "Recommended", desc: "Saved login session", icon: Globe },
+                            { id: "msedge", name: "Microsoft Edge", badge: "Windows Default", desc: "Edge browser profile", icon: Globe },
+                            { id: "chromium", name: "Chromium Sandbox", badge: "Isolated", desc: "Clean test session", icon: Cpu },
+                          ].map((b) => {
+                            const isChosen = browserChannel === b.id;
+                            const Icon = b.icon;
+                            return (
+                              <button
+                                key={b.id}
+                                type="button"
+                                onClick={() => setBrowserChannel(b.id)}
+                                className={`p-2.5 rounded-xl border text-left transition-all ${
+                                  isChosen
+                                    ? "bg-indigo-50/70 dark:bg-indigo-950/40 border-indigo-500 ring-2 ring-indigo-500/20"
+                                    : "bg-slate-50 dark:bg-[#11192e] border-slate-200 dark:border-[#1d2946]"
+                                }`}
+                              >
+                                <div className="flex items-center gap-1.5">
+                                  <Icon className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                                  <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                                    {b.name}
+                                  </span>
+                                </div>
+                                <span className="inline-block text-[9px] font-bold text-indigo-600 dark:text-indigo-400 mt-1">
+                                  {b.badge}
+                                </span>
+                                <p className="text-[10px] text-slate-400 truncate mt-0.5">{b.desc}</p>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Recruiter Authentication Notice */}
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-[#11192e] border border-slate-200 dark:border-[#1d2946] flex items-start gap-2.5">
+                        <ShieldCheck className="h-4 w-4 text-emerald-500 shrink-0 mt-0.5" />
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                          <strong className="text-slate-700 dark:text-slate-200">Direct Recruiter Authentication: </strong>
+                          Your chosen browser opens with its persistent profile. Simply log into your LinkedIn account directly in the browser window, and the agent will autonomously perform candidate search, section extraction, and evidence scoring.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* SECTION B: LIVE SOURCING EXECUTION CONTAINER (7 cols) */}
+                  <div className="lg:col-span-7 space-y-4">
+                    <div className="p-6 rounded-2xl bg-white dark:bg-[#0d1222] border border-slate-200/80 dark:border-[#172138] shadow-xs space-y-5">
+                      <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-[#151f38]">
+                        <div className="flex items-center gap-2">
+                          <Terminal className="h-4 w-4 text-indigo-500" />
+                          <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                            Live Browser Automation & Telemetry
+                          </h4>
+                        </div>
+                        {sourcing && (
+                          <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping" />
+                            Live Telemetry Active
+                          </span>
                         )}
                       </div>
-                    </div>
-                  )}
 
-                  {/* Action Buttons: Open LinkedIn & Continue */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg mx-auto pt-1">
-                    <button
-                      type="button"
-                      onClick={handleOpenLinkedInTab}
-                      className="flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-[#7c3aed] to-[#6366f1] hover:from-[#6d28d9] hover:to-[#4f46e5] text-white font-bold text-xs sm:text-sm shadow-md shadow-indigo-500/25 transition-all cursor-pointer hover:shadow-indigo-500/40 hover:-translate-y-0.5 active:translate-y-0"
-                    >
-                      <ExternalLink className="h-4 w-4" />
-                      <span>Open LinkedIn ↗</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleVerifyAndContinue}
-                      disabled={isVerifyingScreen}
-                      className="flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-[#059669] to-[#10b981] hover:from-[#047857] hover:to-[#059669] text-white font-bold text-xs sm:text-sm shadow-md shadow-emerald-500/25 transition-all cursor-pointer hover:shadow-emerald-500/40 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-60 disabled:cursor-not-allowed"
-                    >
-                      {isVerifyingScreen ? (
-                        <>
-                          <RefreshCw className="h-4 w-4 animate-spin" />
-                          <span>AI Agent Verifying Screen...</span>
-                        </>
-                      ) : (
-                        <>
-                          <div className="h-4 w-4 rounded-full bg-white/20 flex items-center justify-center">
-                            <Check className="h-2.5 w-2.5 text-white stroke-[3]" />
+                      {/* Initial Pre-Execution Summary */}
+                      {!sourcing && sessionState !== "completed" && sessionState !== "failed" && (
+                        <div className="space-y-4">
+                          <div className="p-4 rounded-xl bg-slate-50 dark:bg-[#11192e] border border-slate-200 dark:border-[#1d2946] space-y-2.5 text-xs">
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-400">Target Role:</span>
+                              <strong className="text-slate-900 dark:text-white">{jobRequirements.jobTitle || "Custom Role"}</strong>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-400">Active Query:</span>
+                              <code className="text-[11px] font-mono text-indigo-600 dark:text-indigo-400 truncate max-w-[280px]">
+                                {strategicQueries.find((q) => q.id === selectedQueryId)?.query || "Precision Role Query"}
+                              </code>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-400">Profiles to Harvest:</span>
+                              <strong className="text-slate-900 dark:text-white">{maxResults} Candidates</strong>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-400">Browser Environment:</span>
+                              <strong className="text-slate-900 dark:text-white">
+                                {browserChannel === "msedge" ? "Microsoft Edge" : browserChannel === "chrome" ? "Google Chrome" : "Chromium Sandbox"}
+                              </strong>
+                            </div>
                           </div>
-                          <span>I&apos;ve Logged In — Continue →</span>
-                        </>
+
+                          <div className="flex items-center gap-3 p-3.5 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/50">
+                            <div className="h-8 w-8 rounded-lg bg-indigo-600/10 dark:bg-indigo-400/10 flex items-center justify-center shrink-0 text-indigo-600 dark:text-indigo-400">
+                              <Sparkles className="h-4 w-4" />
+                            </div>
+                            <div className="text-xs">
+                              <strong className="text-slate-900 dark:text-white block font-bold">Ready to Launch Automation</strong>
+                              <span className="text-slate-500 dark:text-slate-400">
+                                Parameters configured. Click <strong className="text-indigo-600 dark:text-indigo-400">{searchMode === "live" ? "Start Live LinkedIn Sourcing" : "Start Autonomous Sourcing"}</strong> in the bottom bar to begin.
+                              </span>
+                            </div>
+                          </div>
+                        </div>
                       )}
-                    </button>
-                  </div>
 
-                  {/* Bottom Info Pill */}
-                  <div className="p-3 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-100/80 dark:border-indigo-900/40 text-left flex items-start gap-2.5 max-w-lg mx-auto">
-                    <div className="h-5 w-5 rounded-full bg-indigo-100 dark:bg-indigo-900/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0 mt-0.5">
-                      <Info className="h-3 w-3" />
-                    </div>
-                    <div className="space-y-0.5">
-                      <div className="text-[11px] font-bold text-indigo-950 dark:text-indigo-200">
-                        The AI Agent is safely paused.
-                      </div>
-                      <p className="text-[10px] text-indigo-800/80 dark:text-indigo-300/80 leading-relaxed">
-                        Hiring Desk runs a dedicated browser profile to avoid locking or altering your personal browser data. Once you sign in inside the opened window, your session is saved permanently and the agent takes over UI traversal.
-                      </p>
+                      {/* Explicit Error State Panel if Failed */}
+                      {!sourcing && sessionState === "failed" && (
+                        <div className="space-y-4">
+                          <div className="p-4 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 space-y-2.5 text-xs">
+                            <div className="flex items-center gap-2 text-rose-700 dark:text-rose-400 font-bold">
+                              <AlertCircle className="h-4 w-4 shrink-0" />
+                              <span>Sourcing Stopped Unexpectedly</span>
+                            </div>
+                            <p className="text-slate-600 dark:text-slate-300">
+                              {sessionError || error || "The browser session encountered an error or was interrupted. Check your LinkedIn login and try again."}
+                            </p>
+                            <div className="pt-2 flex items-center gap-3">
+                              <button
+                                type="button"
+                                onClick={() => handleLaunchSourcing(searchMode)}
+                                className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs transition-colors flex items-center gap-1.5 shadow-xs"
+                              >
+                                <Play className="h-3.5 w-3.5 fill-white" />
+                                Retry Sourcing
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Live Running Interface & Telemetry */}
+                      {(sourcing || sessionState === "completed" || sessionState === "searching" || sessionState === "launching_browser" || sessionState === "extracting" || sessionState === "persisting") && (
+                        <div className="space-y-4">
+                          {/* Progress bar */}
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between text-xs font-bold text-slate-800 dark:text-slate-200">
+                              <span>{sourcingStage || "Executing Browser Automation..."}</span>
+                              <span className="text-indigo-600 dark:text-indigo-400">{sessionProgress}%</span>
+                            </div>
+                            <div className="h-2 w-full bg-slate-100 dark:bg-[#141d33] rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-500 transition-all duration-500"
+                                style={{ width: `${sessionProgress}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          {/* 6 Real Browser Automation Stages */}
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                            {[
+                              { step: 1, name: "1. Launch Browser", active: sessionProgress >= 15 },
+                              { step: 2, name: "2. Session Check", active: sessionProgress >= 30 },
+                              { step: 3, name: "3. LinkedIn Search", active: sessionProgress >= 50 },
+                              { step: 4, name: "4. Profile Extract", active: sessionProgress >= 70 },
+                              { step: 5, name: "5. AI Evaluation", active: sessionProgress >= 85 },
+                              { step: 6, name: "6. Profiles Saved", active: sessionProgress >= 100 },
+                            ].map((stage) => (
+                              <div
+                                key={stage.step}
+                                className={`p-2.5 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
+                                  stage.active
+                                    ? "bg-indigo-50 dark:bg-indigo-950/40 border-indigo-400 text-indigo-700 dark:text-indigo-300"
+                                    : "bg-slate-50 dark:bg-[#10172c] border-slate-200 dark:border-[#1a2542] text-slate-400"
+                                }`}
+                              >
+                                {stage.active ? (
+                                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                                ) : (
+                                  <Circle className="h-3.5 w-3.5 text-slate-300 shrink-0" />
+                                )}
+                                <span className="truncate">{stage.name}</span>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Live Metric Counters */}
+                          <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 pt-1 text-center">
+                            <div className="p-2 rounded-xl bg-slate-50 dark:bg-[#10172c] border border-slate-200 dark:border-[#1a2542]">
+                              <div className="text-[10px] font-bold text-slate-400 uppercase">Discovered</div>
+                              <div className="text-base font-black text-slate-900 dark:text-white mt-0.5">{executionStats.discovered}</div>
+                            </div>
+                            <div className="p-2 rounded-xl bg-slate-50 dark:bg-[#10172c] border border-slate-200 dark:border-[#1a2542]">
+                              <div className="text-[10px] font-bold text-slate-400 uppercase">Extracted</div>
+                              <div className="text-base font-black text-slate-900 dark:text-white mt-0.5">{executionStats.extracted}</div>
+                            </div>
+                            <div className="p-2 rounded-xl bg-slate-50 dark:bg-[#10172c] border border-slate-200 dark:border-[#1a2542]">
+                              <div className="text-[10px] font-bold text-slate-400 uppercase">Evaluated</div>
+                              <div className="text-base font-black text-slate-900 dark:text-white mt-0.5">{executionStats.evaluated}</div>
+                            </div>
+                            <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800">
+                              <div className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase">Profiles Saved</div>
+                              <div className="text-base font-black text-emerald-700 dark:text-emerald-300 mt-0.5">{executionStats.saved}</div>
+                            </div>
+                            <div className="p-2 rounded-xl bg-slate-50 dark:bg-[#10172c] border border-slate-200 dark:border-[#1a2542]">
+                              <div className="text-[10px] font-bold text-slate-400 uppercase">Duplicates</div>
+                              <div className="text-base font-black text-slate-900 dark:text-white mt-0.5">{executionStats.duplicates}</div>
+                            </div>
+                          </div>
+
+                          {/* Live Console Terminal Output */}
+                          <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 font-mono text-[11px] text-slate-300 max-h-48 overflow-y-auto space-y-1.5">
+                            {logs.length === 0 ? (
+                              <div className="text-slate-500 italic">Awaiting browser automation telemetry...</div>
+                            ) : (
+                              logs.slice(0, 10).map((l, i) => (
+                                <div key={i} className="flex items-start gap-2 leading-relaxed">
+                                  <span className="text-slate-500 shrink-0">[{l.time}]</span>
+                                  <span className={l.icon === "shield" ? "text-emerald-400" : "text-slate-200"}>
+                                    {l.text}
+                                  </span>
+                                </div>
+                              ))
+                            )}
+                          </div>
+
+                          {/* Control Buttons */}
+                          <div className="flex items-center justify-between pt-2">
+                            {sourcing && (
+                              <button
+                                type="button"
+                                onClick={handleStopSourcing}
+                                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold text-xs transition-colors"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                                <span>Stop Sourcing</span>
+                              </button>
+                            )}
+
+                            {sessionState === "completed" && (
+                              <div className="flex flex-wrap items-center gap-2.5 ml-auto">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSessionState("idle");
+                                    setSessionProgress(0);
+                                    setSourcingStage("");
+                                    setExecutionStats({
+                                      discovered: 0,
+                                      extracted: 0,
+                                      evaluated: 0,
+                                      saved: 0,
+                                      duplicates: 0,
+                                      durationSeconds: 0,
+                                    });
+                                    setActiveSessionId(null);
+                                  }}
+                                  className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-[#1d2744] bg-white dark:bg-[#12192e] text-slate-700 dark:text-slate-300 font-bold text-xs hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
+                                >
+                                  <RefreshCw className="h-3.5 w-3.5 text-indigo-500" />
+                                  <span>Configure Fresh Search</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setIsWizardOpen(false);
+                                    setActiveNav("overview");
+                                  }}
+                                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-lg shadow-emerald-600/30 transition-all cursor-pointer"
+                                >
+                                  <Check className="h-4 w-4" />
+                                  <span>View Collected Candidates</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
+                </div>
+              </div>
+            )}
+          </div>
 
-                  {/* Action links */}
-                  <div className="flex items-center justify-between max-w-lg mx-auto pt-1 text-[11px]">
+          {/* Wizard Bottom Sticky Footer Navigation */}
+          <footer className="h-20 px-6 lg:px-14 border-t border-slate-200/80 dark:border-[#151e36] bg-white/95 dark:bg-[#0a0f1e]/95 backdrop-blur fixed bottom-0 left-0 right-0 z-30 flex items-center justify-between shadow-lg">
+            {/* Left Nav */}
+            <div>
+              {wizardStep === 1 ? (
+                <button
+                  type="button"
+                  onClick={handleClearForm}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-500 hover:text-rose-600 transition-colors"
+                >
+                  Clear Form
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setWizardStep((prev) => Math.max(1, prev - 1))}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-200 dark:border-[#1c2744] bg-white dark:bg-[#12192e] text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-50 transition-colors shadow-xs"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                  <span>Back</span>
+                </button>
+              )}
+            </div>
+
+            {/* Center Status / Validation */}
+            <div className="hidden sm:block text-center text-xs text-slate-400">
+              {wizardStep === 1 && "Step 1 of 3: Provide role title and requirements"}
+              {wizardStep === 2 && "Step 2 of 3: Select or edit preferred LinkedIn search query"}
+              {wizardStep === 3 && "Step 3 of 3: Configure target count and launch browser"}
+            </div>
+
+            {/* Right Primary Action */}
+            <div>
+              {wizardStep === 1 && (
+                <button
+                  type="button"
+                  onClick={handleStep1Next}
+                  disabled={generatingQueries}
+                  className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 text-white text-xs font-black shadow-lg shadow-indigo-600/25 transition-all disabled:opacity-50 cursor-pointer"
+                >
+                  {generatingQueries ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      <span>Formulating Queries...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Next: Generate Search Queries</span>
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </>
+                  )}
+                </button>
+              )}
+
+              {wizardStep === 2 && (
+                <button
+                  type="button"
+                  onClick={handleStep2Next}
+                  className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 text-white text-xs font-black shadow-lg shadow-indigo-600/25 transition-all cursor-pointer"
+                >
+                  <span>Next: Configure Execution</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              )}
+
+              {wizardStep === 3 && (
+                <div className="flex items-center gap-2.5">
+                  {sessionState === "completed" && !sourcing && (
                     <button
                       type="button"
                       onClick={() => {
-                        handleStopSourcing();
-                        handleLaunchSourcing("demo");
+                        setIsWizardOpen(false);
+                        setActiveNav("overview");
                       }}
-                      className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 underline font-medium transition-colors cursor-pointer"
+                      className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-[#1d2744] bg-white dark:bg-[#12192e] text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-50 transition-colors shadow-xs cursor-pointer"
                     >
-                      Switch to Offline Demo →
+                      <Check className="h-3.5 w-3.5 text-emerald-500" />
+                      <span>View Shortlist</span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={handleStopSourcing}
-                      className="text-rose-500 hover:text-rose-700 font-medium transition-colors cursor-pointer"
-                    >
-                      Cancel Sourcing
-                    </button>
-                  </div>
-                </div>
-              ) : sourcing || (sessionState !== "idle" && sessionState !== "stopped" && sessionState !== "failed") ? (
-                /* LIVE EXECUTION MONITOR & STEPPER */
-                <div className="space-y-4">
-                  {/* Status Card */}
-                  <div className="p-4 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white border border-indigo-900/60 shadow-lg flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="relative flex items-center justify-center">
-                        {sessionState === "completed" ? (
-                          <div className="h-10 w-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
-                            <Check className="h-5 w-5" />
-                          </div>
-                        ) : (
-                          <div className="h-10 w-10 rounded-xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
-                            <RefreshCw className="h-5 w-5 animate-spin" />
-                          </div>
-                        )}
-                      </div>
-                      <div>
-                        <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-300">
-                          {sessionState === "completed" ? "Sourcing Completed Successfully" : "Browser Automation In Progress"}
-                        </div>
-                        <div className="text-sm font-black text-white">
-                          {searchMode === "simulation"
-                            ? "Mode A — Autonomous UI Agent Collection"
-                            : `Mode B — Direct Live LinkedIn Sourcing (${browserChannel === "msedge" ? "Microsoft Edge" : browserChannel === "chrome" ? "Google Chrome" : "Chromium"})`}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xl font-black text-indigo-300">{sessionProgress}%</div>
-                      <div className="text-[10px] text-slate-400">Progress</div>
-                    </div>
-                  </div>
-
-                  {/* Animated Progress Bar */}
-                  <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2.5 overflow-hidden">
-                    <div
-                      className={`h-full transition-all duration-500 rounded-full ${sessionState === "completed"
-                          ? "bg-emerald-500"
-                          : sessionState === "failed"
-                            ? "bg-rose-500"
-                            : "bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-400"
-                        }`}
-                      style={{ width: `${sessionProgress}%` }}
-                    />
-                  </div>
-
-                  {/* 5-Step Visual Stepper */}
-                  <div className="grid grid-cols-5 gap-1.5">
-                    {[
-                      { key: "launching_browser", label: "1. Launch", desc: `${browserChannel === "msedge" ? "Edge" : browserChannel === "chrome" ? "Chrome" : "Chromium"} Headed` },
-                      { key: "waiting_for_login", label: "2. Cookie/Login", desc: "Session Check" },
-                      { key: "searching", label: "3. LinkedIn Search", desc: "People Traversal" },
-                      { key: "extracting", label: "4. Profile Extract", desc: "Resumes & Skills" },
-                      { key: "persisting", label: "5. SQLite DB", desc: "Resumes Saved" },
-                    ].map((step, idx) => {
-                      const stepOrder = ["launching_browser", "waiting_for_login", "searching", "extracting", "persisting", "completed"];
-                      const currentIdx = stepOrder.indexOf(sessionState);
-                      const isPast = (currentIdx > idx && currentIdx !== -1) || sessionState === "completed";
-                      const isCurrent = currentIdx === idx && sessionState !== "completed";
-
-                      return (
-                        <div
-                          key={step.key}
-                          className={`p-2 rounded-xl border text-center transition-all ${isPast
-                              ? "bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 font-semibold"
-                              : isCurrent
-                                ? "bg-indigo-50/90 dark:bg-indigo-950/40 border-indigo-500 text-indigo-900 dark:text-indigo-200 shadow-sm ring-1 ring-indigo-500 font-bold"
-                                : "bg-slate-50 dark:bg-[#11172a] border-slate-200 dark:border-[#1d2745] text-slate-400 font-normal"
-                            }`}
-                        >
-                          <div className="text-[11px] truncate">{step.label}</div>
-                          <div className="text-[9px] opacity-75 mt-0.5 truncate">{step.desc}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Live Status Description */}
-                  <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#0c1222] border border-slate-200 dark:border-[#1a243f] text-xs text-slate-700 dark:text-slate-200 flex items-start gap-3">
-                    <Globe className="h-4 w-4 shrink-0 text-indigo-500 mt-0.5" />
-                    <div className="space-y-1">
-                      <div className="font-bold text-slate-900 dark:text-white">Active Stage Telemetry</div>
-                      <div className="text-[12px] text-slate-600 dark:text-slate-300 leading-relaxed font-mono">
-                        {sourcingStage || "Automating browser actions..."}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Browser Live Notice */}
-                  <div className="p-2.5 rounded-xl bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200/60 dark:border-indigo-800/60 text-[11px] text-indigo-700 dark:text-indigo-300 flex items-center gap-2">
-                    <ShieldCheck className="h-4 w-4 text-indigo-600 shrink-0" />
-                    <span>The headed {browserChannel === "msedge" ? "Edge" : browserChannel === "chrome" ? "Chrome" : "Chromium"} browser is running live on your desktop. You can see pages and candidate cards being processed in real-time.</span>
-                  </div>
-                </div>
-              ) : (
-                /* PRE-LAUNCH CONFIGURATION FORM */
-                <>
-                  <div>
-                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-2">Target Role Profile</label>
-                    <div className="grid grid-cols-3 gap-2.5">
-                      {Object.keys(SAMPLE_JDS).map((key) => {
-                        const item = SAMPLE_JDS[key];
-                        const isSelected = selectedRolePreset === key;
-                        return (
-                          <button
-                            key={key}
-                            onClick={() => handleSelectRolePreset(key)}
-                            className={`p-3 rounded-xl border text-left transition-all ${isSelected
-                                ? "bg-indigo-50/80 dark:bg-indigo-600/20 border-indigo-500 text-indigo-900 dark:text-white shadow-xs font-bold"
-                                : "bg-slate-50 dark:bg-[#10162a] border-slate-200 dark:border-[#1d2744] text-slate-600 dark:text-slate-400 hover:border-slate-400"
-                              }`}
-                          >
-                            <div className="text-xs truncate">{item.title}</div>
-                            <div className="text-[10px] text-slate-400 mt-1">{item.experience} • {item.location}</div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1.5">
-                      Candidate Search Query (AI Generated)
-                    </label>
-                    <div className="p-3 bg-slate-50 dark:bg-[#070b16] rounded-xl border border-slate-200 dark:border-[#1b253f] font-mono text-xs text-indigo-700 dark:text-indigo-300 break-words font-semibold">
-                      {analysisResult?.search_plan?.linkedin_keywords ||
-                        `"${currentRole.title}" React Next.js Python FastAPI WebSockets`}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3.5">
-                    <div>
-                      <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1.5">Execution Mode</label>
-                      <select
-                        value={searchMode}
-                        onChange={(e) => setSearchMode(e.target.value)}
-                        className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1e2a48] text-xs font-medium text-slate-800 dark:text-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-indigo-500"
-                      >
-                        <option value="autonomous">Mode A — 🤖 Autonomous Sourcing (Direct Real LinkedIn & Auto-Harvest)</option>
-                        <option value="live_linkedin">Mode B — 🌐 Guided Live Sourcing (Headed Browser & Safe Handover)</option>
-                        <option value="demo">🧪 Offline Demo (Simulated Profiles for Testing)</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1.5">Candidates to Extract</label>
-                      <select
-                        value={maxResults}
-                        onChange={(e) => setMaxResults(Number(e.target.value))}
-                        className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1e2a48] text-xs font-medium text-slate-800 dark:text-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-indigo-500"
-                      >
-                        <option value={6}>6 Candidates (Fast Verification)</option>
-                        <option value={10}>10 Candidates (Standard Run)</option>
-                        <option value={15}>15 Candidates (Deep Search)</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Browser Engine & Account Selection (Chrome vs Edge vs Chromium) */}
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                        Browser &amp; Account Selection
-                      </label>
-                      <span className="text-[10px] text-indigo-500 font-semibold">
-                        Choose browser for LinkedIn session
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      {[
-                        { id: "chrome", label: "Google Chrome", badge: "Recommended", icon: "🌐", desc: "Use Chrome & saved login" },
-                        { id: "msedge", label: "Microsoft Edge", badge: "Windows Default", icon: "🌊", desc: "Use Edge & saved login" },
-                        { id: "chromium", label: "Chromium Sandbox", badge: "Isolated", icon: "🚀", desc: "Clean test browser environment" },
-                      ].map((b) => (
-                        <button
-                          key={b.id}
-                          type="button"
-                          onClick={() => setBrowserChannel(b.id)}
-                          className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                            browserChannel === b.id
-                              ? "bg-indigo-50/90 dark:bg-indigo-600/25 border-indigo-500 text-indigo-900 dark:text-white ring-2 ring-indigo-500/40 font-bold"
-                              : "bg-slate-50 dark:bg-[#10162a] border-slate-200 dark:border-[#1e2a48] text-slate-600 dark:text-slate-400 hover:border-slate-300"
-                          }`}
-                        >
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-xs truncate font-bold">{b.icon} {b.label}</span>
-                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-normal shrink-0">{b.badge}</span>
-                          </div>
-                          <div className="text-[10px] text-slate-400 font-normal leading-tight">{b.desc}</div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/20 text-xs text-indigo-700 dark:text-indigo-300 flex items-start gap-2.5">
-                    <ShieldCheck className="h-4 w-4 shrink-0 mt-0.5 text-indigo-600 dark:text-indigo-400" />
-                    <span>
-                      <strong>Direct LinkedIn Headed Browser:</strong> Mode B launches a visible {browserChannel === "msedge" ? "Microsoft Edge" : browserChannel === "chrome" ? "Google Chrome" : "Chromium"} browser window directly to LinkedIn on your desktop. If you are already signed into LinkedIn in your chosen browser, the agent detects the session immediately. After harvesting, it automatically returns back to this Hiring Desk portal.
-                    </span>
-                  </div>
-                </>
-              )}
-
-              {/* Error Feedback */}
-              {(error || sessionError) && (
-                <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
-                  <span>{error || sessionError}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Modal Actions */}
-            <div className="p-4 border-t border-slate-100 dark:border-[#18233c] bg-slate-50/50 dark:bg-[#0a0f1d] flex items-center justify-between">
-              {sourcing || (sessionState !== "completed" && sessionState !== "idle" && sessionState !== "stopped" && sessionState !== "failed") ? (
-                <>
+                  )}
                   <button
-                    onClick={handleStopSourcing}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 transition-colors"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                    <span>Stop Sourcing</span>
-                  </button>
-                  <div className="flex items-center gap-2 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                    <span>
-                      Automation running in{" "}
-                      {browserChannel === "msedge"
-                        ? "Microsoft Edge"
-                        : browserChannel === "chrome"
-                        ? "Google Chrome"
-                        : "Chromium"}
-                      ...
-                    </span>
-                  </div>
-
-                </>
-              ) : sessionState === "completed" ? (
-                <>
-                  <button
+                    type="button"
                     onClick={() => {
-                      setSessionState("idle");
-                      setSessionProgress(0);
+                      if (!sourcing) {
+                        handleLaunchSourcing(searchMode);
+                      }
                     }}
-                    className="px-4 py-2 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
+                    disabled={sourcing}
+                    className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 text-white text-xs font-black shadow-lg shadow-indigo-600/25 transition-all disabled:opacity-50 cursor-pointer"
                   >
-                    Run Another Search
+                    {sourcing ? (
+                      <>
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        <span>Sourcing in Progress...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play className="h-3.5 w-3.5 fill-white" />
+                        <span>
+                          {sessionState === "completed"
+                            ? (searchMode === "live" ? "Re-Run Live LinkedIn Sourcing" : "Re-Run Autonomous Sourcing")
+                            : (searchMode === "live" ? "Start Live LinkedIn Sourcing" : "Start Autonomous Sourcing")}
+                        </span>
+                      </>
+                    )}
                   </button>
-                  <button
-                    onClick={() => {
-                      setIsSourcingModalOpen(false);
-                      setSessionState("idle");
-                    }}
-                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/25 transition-all"
-                  >
-                    <Check className="h-3.5 w-3.5" />
-                    <span>View Shortlist & Done</span>
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    onClick={() => setIsSourcingModalOpen(false)}
-                    className="px-4 py-2 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-800 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={() => handleLaunchSourcing(searchMode)}
-                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/25 transition-all"
-                  >
-                    <Play className="h-3.5 w-3.5 fill-white" />
-                    <span>Launch Candidate Sourcing</span>
-                  </button>
-                </>
+                </div>
               )}
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* -------------------- 5. MODAL: EDIT JOB DESCRIPTION -------------------- */}
-      {isJdEditorOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
-          <div className="w-full max-w-2xl bg-white dark:bg-[#0d1222] border border-slate-200 dark:border-[#1f2b47] rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="p-5 border-b border-slate-100 dark:border-[#18233c] flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="h-9 w-9 rounded-xl bg-indigo-50 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
-                  <FileText className="h-4 w-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-black text-slate-900 dark:text-white">Edit Job Description & Extract Criteria</h3>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">Gemini AI parses competencies, experience, and search queries</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsJdEditorOpen(false)}
-                className="h-8 w-8 rounded-lg bg-slate-100 dark:bg-[#141b2e] text-slate-500 hover:text-slate-800 flex items-center justify-center"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="px-6 pt-3.5 pb-1 flex items-center gap-2">
-              <span className="text-xs font-bold text-slate-400 mr-1">Presets:</span>
-              {Object.keys(SAMPLE_JDS).map((k) => (
-                <button
-                  key={k}
-                  onClick={() => handleSelectRolePreset(k)}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${selectedRolePreset === k
-                      ? "bg-indigo-600 text-white shadow-xs"
-                      : "bg-slate-100 dark:bg-[#12192d] text-slate-600 dark:text-slate-400 hover:bg-slate-200"
-                    }`}
-                >
-                  {SAMPLE_JDS[k].title}
-                </button>
-              ))}
-            </div>
-
-            <div className="p-6 flex-1 overflow-y-auto space-y-3">
-              <textarea
-                value={rawJd}
-                onChange={(e) => setRawJd(e.target.value)}
-                rows={11}
-                placeholder="Paste raw Job Description here..."
-                className="w-full bg-slate-50 dark:bg-[#070b16] border border-slate-200 dark:border-[#1a243e] rounded-2xl p-4 text-xs font-mono text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-500 leading-relaxed"
-              />
-            </div>
-
-            <div className="p-4 border-t border-slate-100 dark:border-[#18233c] bg-slate-50/50 dark:bg-[#0a0f1d] flex items-center justify-between">
-              <button
-                onClick={() => setIsJdEditorOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-800 transition-colors"
-              >
-                Close
-              </button>
-              <button
-                onClick={handleAnalyzeJd}
-                disabled={analyzing}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-indigo-600 hover:from-teal-400 hover:to-indigo-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/25 transition-all disabled:opacity-50"
-              >
-                {analyzing ? (
-                  <>
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                    <span>Extracting Criteria with Gemini...</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="h-3.5 w-3.5" />
-                    <span>Extract Criteria & Update Role</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* -------------------- 5.5 MODAL: POST-JD ENHANCEMENT HANDOVER -------------------- */}
-      {isPostJdPromptOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
-          <div className="w-full max-w-lg bg-white dark:bg-[#0d1222] border border-slate-200 dark:border-[#1f2b47] rounded-3xl shadow-2xl p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-2xl bg-gradient-to-tr from-indigo-600 to-purple-600 text-white flex items-center justify-center shadow-md shadow-indigo-500/25">
-                  <Sparkles className="h-5 w-5 fill-white" />
-                </div>
-                <div>
-                  <h3 className="text-base font-black text-slate-900 dark:text-white">JD Enhancement Complete</h3>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">Search plan & criteria verified by Gemini AI</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsPostJdPromptOpen(false)}
-                className="h-8 w-8 rounded-lg bg-slate-100 dark:bg-[#141b2e] text-slate-500 hover:text-slate-800 flex items-center justify-center"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            {/* Target Role & Search Plan Preview */}
-            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-[#0b101f] border border-slate-200/80 dark:border-[#19243d] space-y-2 text-xs">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-slate-700 dark:text-slate-300">Target Role:</span>
-                <span className="font-black text-indigo-600 dark:text-indigo-400">{currentRole.title}</span>
-              </div>
-              <div>
-                <span className="text-[11px] font-bold text-slate-400 block mb-1">Generated Boolean Query:</span>
-                <code className="block p-2 rounded-xl bg-white dark:bg-[#11182c] border border-slate-200 dark:border-[#1e2a4a] text-[11px] font-mono text-slate-800 dark:text-slate-200 break-words">
-                  {analysisResult?.search_plan?.linkedin_keywords || `"${currentRole.title}" React Next.js`}
-                </code>
-              </div>
-            </div>
-
-            {/* LinkedIn Auth / Permission Explanation */}
-            <div className="p-3.5 rounded-2xl bg-indigo-50/80 dark:bg-indigo-500/10 border border-indigo-200/80 dark:border-indigo-500/20 text-xs text-indigo-900 dark:text-indigo-200 space-y-1.5">
-              <div className="flex items-center gap-2 font-bold">
-                <ShieldCheck className="h-4 w-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
-                <span>Next Step: Autonomous LinkedIn Sourcing</span>
-              </div>
-              <p className="text-[11px] text-indigo-800/80 dark:text-indigo-300 leading-relaxed pl-6">
-                The agent will launch the browser, search LinkedIn, visit candidate profiles/resumes, read their experience, and send details to the backend for scoring.
-                If this is your first time, the agent will pause for you to log in in the opened Chromium window.
-              </p>
-            </div>
-
-            {/* Modal Actions */}
-            <div className="flex flex-col sm:flex-row items-center justify-end gap-2.5 pt-2">
-              <button
-                onClick={async () => {
-                  await handleOpenLoginBrowser();
-                }}
-                className="w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-[#151e36] hover:bg-slate-200 transition-colors"
-              >
-                Sign into LinkedIn
-              </button>
-              <button
-                onClick={() => {
-                  setIsPostJdPromptOpen(false);
-                  handleLaunchSourcing("simulation");
-                }}
-                className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 shadow-md shadow-indigo-600/30 transition-all"
-              >
-                <Play className="h-3.5 w-3.5 fill-white" />
-                <span>🤖 Run Autonomous Browser Agent</span>
-              </button>
-            </div>
-          </div>
+          </footer>
         </div>
       )}
 
@@ -2635,29 +4129,13 @@ export default function Home() {
             <div>
               <h3 className="text-base font-black text-slate-900 dark:text-white">LinkedIn Login Permission Required</h3>
               <p className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 leading-relaxed">
-                LinkedIn requires an authenticated account to view candidate search results. The Chromium browser is open on your desktop. Please sign in to proceed, or click below to run the autonomous UI agent demo without logging in.
+                LinkedIn requires an authenticated account to view candidate search results. The browser window is open on your desktop. Please sign in to proceed, or click below to run autonomous demo.
               </p>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#12182c] border border-slate-200 dark:border-[#1d2745] text-left text-xs space-y-1.5 text-slate-600 dark:text-slate-300">
-              <div className="flex items-center gap-2 font-bold text-slate-800 dark:text-slate-100">
-                <Check className="h-3.5 w-3.5 text-emerald-500" />
-                <span>Session cookies are preserved in <code>data/browser_profile</code></span>
-              </div>
-              <p className="text-[11px] text-slate-500 pl-5">You will only need to sign in once. Subsequent searches will run autonomously without asking.</p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
               <button
-                onClick={() => {
-                  setIsAuthModalOpen(false);
-                  handleLaunchSourcing("simulation");
-                }}
-                className="px-3 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-teal-500 to-indigo-600 hover:from-teal-400 hover:to-indigo-500 shadow-md transition-all"
-              >
-                🚀 Run Autonomous Agent Demo
-              </button>
-              <button
+                type="button"
                 onClick={handleCheckAuthStatus}
                 disabled={checkingAuth}
                 className="px-3 py-2.5 rounded-xl text-xs font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-700/50 hover:bg-indigo-100 transition-colors"
@@ -2665,165 +4143,752 @@ export default function Home() {
                 {checkingAuth ? "Checking..." : "Check Auth Status"}
               </button>
               <button
+                type="button"
                 onClick={() => {
                   setIsAuthModalOpen(false);
-                  handleLaunchSourcing("linkedin");
+                  handleLaunchSourcing("live");
                 }}
-                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-[#151e36] hover:bg-slate-200 transition-colors"
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 transition-colors"
               >
-                I've Logged In — Live Search
+                I've Logged In — Proceed
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* -------------------- 7. MODAL: CANDIDATE EVIDENCE REVIEW -------------------- */}
+{/* -------------------- 7. MODAL: CANDIDATE EVIDENCE REVIEW -------------------- */}
       {selectedCandidate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
-          <div className="w-full max-w-2xl bg-white dark:bg-[#0d1222] border border-slate-200 dark:border-[#1f2b47] rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="p-5 border-b border-slate-100 dark:border-[#18233c] flex items-start justify-between">
-              <div className="flex items-center gap-3.5">
+          <div className="w-full max-w-3xl bg-white dark:bg-[#0d1222] border border-slate-200 dark:border-[#1f2b47] rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-100 dark:border-[#18233c] flex items-start justify-between gap-4">
+              <div className="flex items-start sm:items-center gap-3.5 min-w-0">
                 <img
                   src={selectedCandidate.avatar || selectedCandidate.avatar_url || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80"}
-                  alt={selectedCandidate.name}
+                  alt={selectedCleanName}
                   onError={(e) => {
                     e.currentTarget.onerror = null;
                     e.currentTarget.src = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80";
                   }}
-                  className="h-12 w-12 rounded-2xl object-cover border-2 border-indigo-500/40 shadow-md"
+                  className="h-12 w-12 rounded-2xl object-cover border-2 border-indigo-500/40 shadow-md shrink-0 mt-0.5 sm:mt-0"
                 />
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-base font-black text-slate-900 dark:text-white">{selectedCandidate.name}</h3>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
-                      {selectedCandidate.match_level || "High"} Fit
+                <div className="min-w-0 space-y-1">
+                  {/* Candidate Name & High-Level Fit Badges */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-base font-black text-slate-900 dark:text-white truncate">
+                      {selectedCleanName}
+                    </h3>
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
+                      {selectedCandidate.match_level || "Medium"} Fit
                     </span>
-                    {selectedCandidate.stored_in_db && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30">
-                        <Database className="h-2.5 w-2.5" />
-                        SQLite Saved
+                    {/* Domain Relevance Header Pill */}
+                    {selectedCandidate.domain_relevance === "Highly Relevant" && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
+                        🎯 Highly Relevant IT
+                      </span>
+                    )}
+                    {selectedCandidate.domain_relevance === "Relevant" && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/20">
+                        💼 Relevant Tech
+                      </span>
+                    )}
+                    {selectedCandidate.domain_relevance === "Partially Relevant" && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20">
+                        ⚠️ Partially Relevant
+                      </span>
+                    )}
+                    {selectedCandidate.domain_relevance === "Not Relevant" && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400 border border-rose-200 dark:border-rose-500/20">
+                        🛑 Non-IT / Academic Domain
+                      </span>
+                    )}
+                    {selectedCandidate.target_role && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30">
+                        <Briefcase className="h-3 w-3 text-indigo-500 shrink-0" />
+                        {selectedCandidate.target_role}
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">{selectedCandidate.headline}</p>
-                  <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1.5">
-                    <MapPin className="h-3 w-3" /> {selectedCandidate.location} • {selectedCandidate.company}
-                  </p>
+
+                  {/* Cleaned & Sanitized Headline (No LinkedIn connection/follower noise) */}
+                  {selectedCleanHeadline && (
+                    <p className="text-xs font-medium text-slate-700 dark:text-slate-200 leading-snug line-clamp-2">
+                      {selectedCleanHeadline}
+                    </p>
+                  )}
+
+                  {/* Metadata Badges Row: Current Company, Title-Cased Location, Work Authorization */}
+                  <div className="flex flex-wrap items-center gap-2 pt-0.5 text-[11px]">
+                    {selectedCandidateCompany && (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-indigo-50/70 text-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800/60 font-semibold shadow-2xs">
+                        <Building2 className="h-3 w-3 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                        <span>{selectedCandidateCompany}</span>
+                      </span>
+                    )}
+                    {selectedFormattedLocation && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-slate-100 text-slate-700 dark:bg-[#141d33] dark:text-slate-300 border border-slate-200/80 dark:border-[#223150] font-medium shadow-2xs">
+                        <MapPin className="h-3 w-3 text-slate-400 shrink-0" />
+                        <span>{selectedFormattedLocation}</span>
+                      </span>
+                    )}
+                    {selectedCandidate.work_authorization && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800 text-[10px] font-bold shadow-2xs">
+                        <Award className="h-2.5 w-2.5 text-amber-600 shrink-0" />
+                        <span>{selectedCandidate.work_authorization}</span>
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => setSelectedCandidate(null)}
-                className="h-8 w-8 rounded-lg bg-slate-100 dark:bg-[#141b2e] text-slate-500 hover:text-slate-800 flex items-center justify-center"
+                className="h-8 w-8 rounded-lg bg-slate-100 dark:bg-[#141b2e] text-slate-500 hover:text-slate-800 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-[#1f2b47] flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+                aria-label="Close modal"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
             <div className="p-6 overflow-y-auto space-y-4">
-              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-[#080d1a] border border-slate-200/80 dark:border-[#1a253e]">
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider">
-                    AI Evaluation Summary
-                  </span>
-                  <span className="text-sm font-black text-emerald-600 dark:text-emerald-400">
-                    {selectedCandidate.skill_match}% Match Score
-                  </span>
+              {/* Requisition Target Role Selector for Evaluation */}
+              <div className="p-3.5 rounded-2xl bg-indigo-50/70 dark:bg-[#0f172a] border border-indigo-100 dark:border-[#1e293b] flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Briefcase className="h-4 w-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Evaluating Against Requisition:</span>
+                  <select
+                    value={evalTargetRole || selectedCandidate.target_role || selectedCandidate.job_title || jobRequirements.jobTitle || (savedJobs[0]?.job_title || "Senior AI Lead")}
+                    onChange={(e) => setEvalTargetRole(e.target.value)}
+                    className="px-2.5 py-1 text-xs font-bold rounded-xl bg-white dark:bg-[#151d30] border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                  >
+                    {savedJobs.map((j) => (
+                      <option key={j.id || j.job_title} value={j.job_title}>
+                        {j.job_title} ({j.location || "Remote"})
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-medium">{selectedCandidate.justification}</p>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                  <span className="text-slate-400">Last Evaluated Against:</span>
+                  <strong className="text-indigo-600 dark:text-indigo-400 font-bold">
+                    {selectedCandidate.job_title || selectedCandidate.target_role || "Pending Evaluation"}
+                  </strong>
+                </div>
               </div>
 
-              {/* About & Summary Extracted by UI Agent */}
-              {selectedCandidate.about && (
-                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-[#080d1a] border border-slate-200/80 dark:border-[#1a253e]">
-                  <div className="flex items-center gap-1.5 mb-1.5">
-                    <FileText className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
-                    <span className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider">
-                      About & Summary (Extracted by UI Agent)
+              {/* STAGE 1: Discovery & Eligibility Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* 1A. Location Compatibility & Relocation Card */}
+                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-[#0a0f1d] border border-slate-200/80 dark:border-[#1a253e] space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                      <MapPin className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+                      1. Preferred Location & Mobility
+                    </span>
+                    {selectedCandidate.location_compatibility_status === "Compatible" && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
+                        ✓ Compatible
+                      </span>
+                    )}
+                    {selectedCandidate.location_compatibility_status === "Needs Verification" && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400 border border-sky-200 dark:border-sky-500/20">
+                        ℹ Needs Verification
+                      </span>
+                    )}
+                    {selectedCandidate.location_compatibility_status === "Incompatible" && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400 border border-rose-200 dark:border-rose-500/20">
+                        ✕ Incompatible
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] space-y-1 text-slate-600 dark:text-slate-300">
+                    <div>
+                      <span className="text-slate-400">Current Residence: </span>
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">{selectedFormattedLocation || "Not specified"}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400">Preferred Work Location: </span>
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">
+                        {[jobRequirements.city, jobRequirements.stateRegion, jobRequirements.country].filter(Boolean).join(", ") || jobRequirements.location || "Flexible / Remote"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-400">Willingness to Relocate: </span>
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">
+                        {selectedCandidate.willingness_to_relocate === "Yes" ? "Yes (Confirmed)" :
+                         selectedCandidate.willingness_to_relocate === "Likely" ? "Likely (In-Region)" :
+                         selectedCandidate.willingness_to_relocate === "No" ? "No" : "Unknown (Evaluated on Merit)"}
+                      </span>
+                    </div>
+                    {selectedCandidate.work_authorization && (
+                      <div className="pt-0.5">
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 dark:text-amber-300">
+                          <Award className="h-3 w-3 text-amber-500" />
+                          Authorization: {selectedCandidate.work_authorization}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  {selectedCandidate.location_compatibility_reason && (
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 italic pt-1 border-t border-slate-200/60 dark:border-[#162035]">
+                      “{selectedCandidate.location_compatibility_reason}”
+                    </p>
+                  )}
+                </div>
+
+                {/* 1B. Professional Domain & Industry Relevance Card */}
+                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-[#0a0f1d] border border-slate-200/80 dark:border-[#1a253e] space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                      <Briefcase className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+                      2. Domain & Industry Relevance
+                    </span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                      selectedCandidate.domain_relevance === "Highly Relevant" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border-emerald-200" :
+                      selectedCandidate.domain_relevance === "Relevant" ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400 border-indigo-200" :
+                      selectedCandidate.domain_relevance === "Partially Relevant" ? "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400 border-amber-200" :
+                      "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400 border-rose-200"
+                    }`}>
+                      {selectedCandidate.domain_relevance || "Relevant"}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-normal">{selectedCandidate.about}</p>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+                    {selectedCandidate.domain_relevance_notes || "Candidate professional background evaluated for IT sector alignment and transferable engineering skills."}
+                  </p>
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500 pt-1 border-t border-slate-200/60 dark:border-[#162035]">
+                    {selectedCandidate.domain_relevance === "Not Relevant" || selectedCandidate.domain_relevance === "Partially Relevant" 
+                      ? "⚠️ Screens out pure teacher training / educational management from dominating IT engineering search."
+                      : "✓ Strong engineering background aligned with production software & AI requirements."}
+                  </p>
+                </div>
+              </div>
+
+              {/* Comprehensive Evidence-Based Executive Fit & Category Analysis */}
+              <div 
+                ref={scoreSectionRef}
+                className="p-4 rounded-2xl bg-slate-50 dark:bg-[#080d1a] border border-slate-200/80 dark:border-[#1a253e] space-y-3"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-emerald-500 shrink-0" />
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider block">
+                        Executive Fit & Evidence-Based Category Analysis
+                      </span>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 font-normal">
+                        Normalized composite scoring • Missing sections do not penalize candidate with 0%
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2.5">
+                    {/* Left/Right Horizontal Scroll Buttons */}
+                    <div className="flex items-center gap-1 bg-white dark:bg-[#11172a] border border-slate-200/80 dark:border-[#1e293b] rounded-lg p-0.5 shadow-2xs">
+                      <button
+                        type="button"
+                        onClick={() => scrollScoreCategories("left")}
+                        disabled={!canScrollCategoriesLeft}
+                        className={`p-1 rounded-md transition-all ${
+                          canScrollCategoriesLeft
+                            ? "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#1a233a] cursor-pointer"
+                            : "text-slate-300 dark:text-slate-600 cursor-not-allowed opacity-40"
+                        }`}
+                        title="Scroll Categories Left"
+                        aria-label="Scroll Categories Left"
+                      >
+                        <ChevronLeft className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => scrollScoreCategories("right")}
+                        disabled={!canScrollCategoriesRight}
+                        className={`p-1 rounded-md transition-all ${
+                          canScrollCategoriesRight
+                            ? "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#1a233a] cursor-pointer"
+                            : "text-slate-300 dark:text-slate-600 cursor-not-allowed opacity-40"
+                        }`}
+                        title="Scroll Categories Right"
+                        aria-label="Scroll Categories Right"
+                      >
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="text-right pl-2 border-l border-slate-200 dark:border-[#1a233a]">
+                      <span className="text-base font-black text-emerald-600 dark:text-emerald-400 block leading-tight">
+                        {selectedCandidate.skill_match != null ? `${selectedCandidate.skill_match}% Fit` : "Pending Eval"}
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-400">
+                        {selectedCandidate.evaluation_coverage !== undefined && selectedCandidate.evaluation_coverage !== null
+                          ? selectedCandidate.evaluation_coverage
+                          : (selectedCandidate.skill_match != null ? 85 : 0)}% Coverage
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Horizontally Scrollable Itemized Weighted Breakdown */}
+                <div 
+                  ref={scoreScrollRef}
+                  onScroll={updateScrollButtons}
+                  className="flex items-stretch gap-3 p-1.5 pb-2.5 overflow-x-auto border-t border-slate-200/60 dark:border-[#162035] scroll-smooth snap-x snap-proximity focus:outline-none scrollbar-thin scroll-pl-1.5 scroll-pr-1.5"
+                >
+                  {[
+                    { key: "experience", label: "💼 Experience", weight: 35 },
+                    { key: "skills", label: "⚡ Skills", weight: 25 },
+                    { key: "about", label: "👤 About", weight: 15 },
+                    { key: "education", label: "🎓 Education", weight: 10 },
+                    { key: "certifications", label: "📜 Certifications", weight: 5 },
+                    { key: "projects", label: "🚀 Projects", weight: 5 },
+                    { key: "activity", label: "📢 Activity", weight: 5 },
+                  ].map(({ key, label, weight }) => {
+                    const isUnevaluated = selectedCandidate.skill_match == null && (!selectedCandidate.category_evaluations || Object.keys(selectedCandidate.category_evaluations).length === 0);
+                    const catEval = selectedCandidate.category_evaluations?.[key];
+                    const isNotAvailable = catEval
+                      ? (catEval.evaluation_state === "not_available" || catEval.status === "Not Available" || catEval.score === null || catEval.score === undefined)
+                      : (key === "about" && (!selectedCandidate.about || selectedCandidate.about.trim().length === 0)) ||
+                        (key === "education" && (!selectedCandidate.education || selectedCandidate.education.length === 0)) ||
+                        (key === "certifications" && (!selectedCandidate.certifications || selectedCandidate.certifications.length === 0)) ||
+                        (key === "projects" && (!selectedCandidate.projects || selectedCandidate.projects.length === 0)) ||
+                        (key === "activity" && (!selectedCandidate.recent_activity || selectedCandidate.recent_activity.length === 0));
+
+                    const score = isUnevaluated
+                      ? null
+                      : (catEval?.score !== undefined && catEval?.score !== null
+                          ? Math.round(catEval.score)
+                          : isNotAvailable ? null : (selectedCandidate.section_scores?.[key] !== undefined && selectedCandidate.section_scores?.[key] !== null ? Math.round(selectedCandidate.section_scores[key]) : null));
+
+                    const rawStatus = isUnevaluated
+                      ? "Pending"
+                      : (catEval?.status || (isNotAvailable ? "Not Available" : (score !== null && score >= 70) ? "Matched" : (score !== null && score >= 40) ? "Partially Matched" : "Not Matched"));
+
+                    const badgeText = isUnevaluated
+                      ? "Pending"
+                      : (isNotAvailable || rawStatus === "Not Available")
+                      ? "N/A"
+                      : rawStatus === "Partially Matched"
+                      ? "Partial"
+                      : rawStatus === "Not Matched"
+                      ? "No Match"
+                      : "Matched";
+
+                    const badgeColor = isUnevaluated
+                      ? "bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+                      : (isNotAvailable || rawStatus === "Not Available")
+                      ? "bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+                      : rawStatus === "Matched"
+                      ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
+                      : rawStatus === "Partially Matched"
+                      ? "bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300"
+                      : "bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300";
+
+                    const explanationText = isUnevaluated
+                      ? "Awaiting AI evaluation"
+                      : (catEval?.explanation || (isNotAvailable ? "Not on public profile" : "Verified from profile records"));
+
+                    return (
+                      <div
+                        key={key}
+                        className={`min-w-[178px] w-[178px] shrink-0 snap-start p-3 rounded-xl border transition-all flex flex-col justify-between ${
+                          isUnevaluated
+                            ? "bg-slate-50 dark:bg-[#0c1220] border-dashed border-slate-200 dark:border-[#162035]"
+                            : isNotAvailable
+                            ? "bg-slate-100/60 dark:bg-[#0c1220] border-slate-200/50 dark:border-[#162035] opacity-80"
+                            : "bg-white dark:bg-[#101728] border-slate-200/80 dark:border-[#1c2742] shadow-xs"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase truncate" title={`${label} (${weight}%)`}>
+                            {label}
+                          </span>
+                          <span className="text-[9px] font-mono text-slate-400 font-semibold shrink-0">
+                            {weight}%
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-1.5 my-1.5">
+                          <div className="text-base font-black text-slate-900 dark:text-white">
+                            {isUnevaluated ? (
+                              <span className="text-xs font-semibold text-slate-400 dark:text-slate-500">—</span>
+                            ) : score !== null ? (
+                              `${score}%`
+                            ) : (
+                              <span className="text-xs font-semibold text-slate-400 dark:text-slate-500">
+                                N/A <span className="text-[8.5px] font-normal font-mono">(No penalty)</span>
+                              </span>
+                            )}
+                          </div>
+                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md whitespace-nowrap shrink-0 ${badgeColor}`}>
+                            {badgeText}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5 leading-snug" title={explanationText}>
+                          {explanationText}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-medium pt-1">
+                  {selectedCandidate.justification || "Candidate profile harvested and verified."}
+                </p>
+              </div>
+
+              {/* 1) About & Summary Section */}
+              {selectedCandidate.about ? (
+                <div className="p-4 rounded-2xl bg-white dark:bg-[#0d1527] border border-slate-200/80 dark:border-[#1a253e] shadow-2xs space-y-2">
+                  <div className="flex items-center gap-2">
+                    <FileText className="h-4 w-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                    <span className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider">
+                      1. Executive About & Professional Summary
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-normal whitespace-pre-line pl-6">
+                    {selectedCandidate.about}
+                  </p>
+                </div>
+              ) : (
+                <div className="p-3.5 rounded-xl bg-slate-50/60 dark:bg-[#0c1222] border border-dashed border-slate-200 dark:border-[#1a253e] flex items-center justify-between text-xs text-slate-400 dark:text-slate-500">
+                  <div className="flex items-center gap-2">
+                    <FileText className="h-4 w-4 text-slate-400" />
+                    <span className="font-semibold text-slate-600 dark:text-slate-400">1. Executive About</span>
+                  </div>
+                  <span className="text-[11px] italic bg-slate-100 dark:bg-[#141b2e] px-2 py-0.5 rounded-md border border-slate-200/50 dark:border-[#1c2742]">
+                    Not published on public profile • No penalty
+                  </span>
                 </div>
               )}
 
-              {/* Experience History Extracted by UI Agent */}
-              {selectedCandidate.experience_history && selectedCandidate.experience_history.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                    <Briefcase className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
-                    Career Experience History (Extracted by UI Agent)
-                  </h4>
+              {/* 2) Career Experience History */}
+              {selectedCandidate.experience_history && selectedCandidate.experience_history.length > 0 ? (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-2">
+                      <Briefcase className="h-4 w-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                      <span>2. Career Experience History</span>
+                    </h4>
+                    <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-[#141b2e] px-2 py-0.5 rounded-full border border-slate-200/60 dark:border-[#1c2742]">
+                      {selectedCandidate.experience_history.length} {selectedCandidate.experience_history.length === 1 ? "position" : "positions"}
+                    </span>
+                  </div>
                   <div className="space-y-2">
                     {selectedCandidate.experience_history.map((exp, i) => (
-                      <div key={i} className="p-3 rounded-xl bg-white dark:bg-[#11172a] border border-slate-200/80 dark:border-[#1d2946] text-xs shadow-xs">
-                        <div className="flex items-center justify-between mb-0.5">
-                          <span className="font-bold text-slate-900 dark:text-white text-xs">{exp.role}</span>
-                          <span className="text-[10px] text-slate-400 font-mono bg-slate-100 dark:bg-[#18223a] px-2 py-0.5 rounded-md">{exp.dates}</span>
+                      <div key={i} className="p-3.5 rounded-xl bg-white dark:bg-[#0f172a] border border-slate-200/80 dark:border-[#1d2946] text-xs shadow-2xs space-y-1.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="font-bold text-slate-900 dark:text-white text-xs">
+                            {exp.role || exp.title || exp.job_title || "Position"}
+                          </span>
+                          {exp.dates && (
+                            <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono bg-slate-100 dark:bg-[#18223a] px-2.5 py-0.5 rounded-md border border-slate-200/60 dark:border-[#223150] shrink-0">
+                              {exp.dates}
+                            </span>
+                          )}
                         </div>
-                        <div className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 mb-1">{exp.company}</div>
+                        {exp.company && (
+                          <div className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
+                            <Building2 className="h-3 w-3 text-indigo-500 shrink-0" />
+                            <span>{exp.company}</span>
+                          </div>
+                        )}
                         {exp.description && (
-                          <p className="text-slate-600 dark:text-slate-300 text-[11px] leading-relaxed">{exp.description}</p>
+                          <p className="text-slate-600 dark:text-slate-300 text-[11px] leading-relaxed whitespace-pre-line pt-0.5">
+                            {exp.description}
+                          </p>
                         )}
                       </div>
                     ))}
                   </div>
                 </div>
+              ) : (
+                <div className="p-3.5 rounded-xl bg-slate-50/60 dark:bg-[#0c1222] border border-dashed border-slate-200 dark:border-[#1a253e] flex items-center justify-between text-xs text-slate-400 dark:text-slate-500">
+                  <div className="flex items-center gap-2">
+                    <Briefcase className="h-4 w-4 text-slate-400" />
+                    <span className="font-semibold text-slate-600 dark:text-slate-400">2. Career Experience</span>
+                  </div>
+                  <span className="text-[11px] italic bg-slate-100 dark:bg-[#141b2e] px-2 py-0.5 rounded-md border border-slate-200/50 dark:border-[#1c2742]">
+                    Verified from title & current role ({selectedCandidateCompany || "Current Organization"})
+                  </span>
+                </div>
               )}
 
-              {/* Extracted Profile Skills */}
-              {selectedCandidate.skills && selectedCandidate.skills.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider mb-1.5">
-                    Extracted Profile Skills
-                  </h4>
-                  <div className="flex flex-wrap gap-1.5">
-                    {selectedCandidate.skills.map((skill, i) => (
-                      <span
-                        key={i}
-                        className="px-2.5 py-0.5 rounded-lg bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[11px] font-medium"
-                      >
-                        {skill}
-                      </span>
+              {/* 3) Education & Academic Background */}
+              {selectedCandidate.education && selectedCandidate.education.length > 0 ? (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-2">
+                      <GraduationCap className="h-4 w-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                      <span>3. Academic Education Background</span>
+                    </h4>
+                    <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-[#141b2e] px-2 py-0.5 rounded-full border border-slate-200/60 dark:border-[#1c2742]">
+                      {selectedCandidate.education.length} {selectedCandidate.education.length === 1 ? "institution" : "institutions"}
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {selectedCandidate.education.map((edu, i) => (
+                      <div key={i} className="p-3.5 rounded-xl bg-white dark:bg-[#0f172a] border border-slate-200/80 dark:border-[#1d2946] text-xs shadow-2xs space-y-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="font-bold text-slate-900 dark:text-white text-xs">
+                            {edu.degree || edu.field_of_study || "Degree"}
+                          </span>
+                          {edu.dates && (
+                            <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono bg-slate-100 dark:bg-[#18223a] px-2.5 py-0.5 rounded-md border border-slate-200/60 dark:border-[#223150] shrink-0">
+                              {edu.dates}
+                            </span>
+                          )}
+                        </div>
+                        {edu.school && (
+                          <div className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
+                            <span>{edu.school}</span>
+                          </div>
+                        )}
+                        {edu.field_of_study && edu.degree && (
+                          <p className="text-slate-500 dark:text-slate-400 text-[11px] pt-0.5">{edu.field_of_study}</p>
+                        )}
+                      </div>
                     ))}
                   </div>
                 </div>
+              ) : (
+                <div className="p-3.5 rounded-xl bg-slate-50/60 dark:bg-[#0c1222] border border-dashed border-slate-200 dark:border-[#1a253e] flex items-center justify-between text-xs text-slate-400 dark:text-slate-500">
+                  <div className="flex items-center gap-2">
+                    <GraduationCap className="h-4 w-4 text-slate-400" />
+                    <span className="font-semibold text-slate-600 dark:text-slate-400">3. Academic Education</span>
+                  </div>
+                  <span className="text-[11px] italic bg-slate-100 dark:bg-[#141b2e] px-2 py-0.5 rounded-md border border-slate-200/50 dark:border-[#1c2742]">
+                    Not publicly listed on profile • No penalty
+                  </span>
+                </div>
               )}
 
-              <div>
-                <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                  <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                  Verified Evidence Quotes
-                </h4>
-                <div className="space-y-2">
-                  {selectedCandidate.evidence_quotes?.map((item, i) => (
-                    <div key={i} className="p-3 rounded-xl bg-white dark:bg-[#11172a] border border-slate-200/80 dark:border-[#1d2946] text-xs shadow-xs">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-bold text-indigo-700 dark:text-indigo-300">{item.requirement}</span>
-                        <span className="text-[10px] text-slate-400 font-mono">
-                          {Math.round(item.confidence * 100)}% Confidence
-                        </span>
+              {/* 4) Licenses & Certifications */}
+              {selectedCandidate.certifications && selectedCandidate.certifications.length > 0 ? (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-2">
+                      <Award className="h-4 w-4 text-amber-500 shrink-0" />
+                      <span>4. Licenses & Certifications</span>
+                    </h4>
+                    <span className="text-[10px] font-semibold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-full border border-amber-200/60 dark:border-amber-900/40">
+                      {selectedCandidate.certifications.length} {selectedCandidate.certifications.length === 1 ? "credential" : "credentials"}
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {selectedCandidate.certifications.map((cert, i) => (
+                      <div key={i} className="p-3.5 rounded-xl bg-white dark:bg-[#0f172a] border border-slate-200/80 dark:border-[#1d2946] text-xs shadow-2xs space-y-1.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="font-bold text-slate-900 dark:text-white text-xs">
+                            {cert.name || cert.title || "Certification"}
+                          </span>
+                          {cert.issue_date && (
+                            <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono bg-slate-100 dark:bg-[#18223a] px-2.5 py-0.5 rounded-md border border-slate-200/60 dark:border-[#223150] shrink-0">
+                              {cert.issue_date}
+                            </span>
+                          )}
+                        </div>
+                        {(cert.issuing_org || cert.issuer || cert.organization) && (
+                          <div className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                            <span>{cert.issuing_org || cert.issuer || cert.organization}</span>
+                          </div>
+                        )}
+                        {(cert.credential_id || cert.id) && (
+                          <div className="pt-0.5">
+                            <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-[#141b2e] px-2 py-0.5 rounded border border-slate-200/60 dark:border-[#1e2a44]">
+                              Credential ID: {cert.credential_id || cert.id}
+                            </span>
+                          </div>
+                        )}
                       </div>
-                      <p className="text-slate-600 dark:text-slate-300 italic">“{item.quote}”</p>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
+              ) : (
+                <div className="p-3.5 rounded-xl bg-slate-50/60 dark:bg-[#0c1222] border border-dashed border-slate-200 dark:border-[#1a253e] flex items-center justify-between text-xs text-slate-400 dark:text-slate-500">
+                  <div className="flex items-center gap-2">
+                    <Award className="h-4 w-4 text-slate-400" />
+                    <span className="font-semibold text-slate-600 dark:text-slate-400">4. Licenses & Certifications</span>
+                  </div>
+                  <span className="text-[11px] italic bg-slate-100 dark:bg-[#141b2e] px-2 py-0.5 rounded-md border border-slate-200/50 dark:border-[#1c2742]">
+                    No certifications publicly listed • No penalty
+                  </span>
+                </div>
+              )}
+
+              {/* 5) Featured Projects & Portfolio */}
+              {selectedCandidate.projects && selectedCandidate.projects.length > 0 ? (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-2">
+                      <Layers className="h-4 w-4 text-blue-500 shrink-0" />
+                      <span>5. Featured Projects & Portfolio</span>
+                    </h4>
+                    <span className="text-[10px] font-semibold text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 px-2 py-0.5 rounded-full border border-blue-200/60 dark:border-blue-900/40">
+                      {selectedCandidate.projects.length} {selectedCandidate.projects.length === 1 ? "project" : "projects"}
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {selectedCandidate.projects.map((proj, i) => (
+                      <div key={i} className="p-3.5 rounded-xl bg-white dark:bg-[#0f172a] border border-slate-200/80 dark:border-[#1d2946] text-xs shadow-2xs space-y-1.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="font-bold text-slate-900 dark:text-white text-xs">
+                            {proj.title || "Project"}
+                          </span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {proj.dates && (
+                              <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono bg-slate-100 dark:bg-[#18223a] px-2.5 py-0.5 rounded-md border border-slate-200/60 dark:border-[#223150]">
+                                {proj.dates}
+                              </span>
+                            )}
+                            {proj.url && (
+                              <a
+                                href={proj.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 hover:underline flex items-center gap-1 bg-indigo-50/70 dark:bg-indigo-950/40 px-2 py-0.5 rounded border border-indigo-200/60 dark:border-indigo-800/60"
+                              >
+                                <span>Repo / Link</span>
+                                <ExternalLink className="h-3 w-3" />
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                        {proj.description && (
+                          <p className="text-slate-600 dark:text-slate-300 text-[11px] leading-relaxed pt-0.5 whitespace-pre-line">
+                            {proj.description}
+                          </p>
+                        )}
+                        {proj.skills && (Array.isArray(proj.skills) ? proj.skills.length > 0 : Boolean(proj.skills)) && (
+                          <div className="flex flex-wrap gap-1 pt-1">
+                            {(Array.isArray(proj.skills) ? proj.skills : String(proj.skills).split(/[,•·|]/)).map((s, idx) => (
+                              <span
+                                key={idx}
+                                className="px-2 py-0.5 rounded-md bg-blue-50/80 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 border border-blue-200/60 dark:border-blue-900/40 text-[10px] font-medium"
+                              >
+                                {String(s).trim()}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3.5 rounded-xl bg-slate-50/60 dark:bg-[#0c1222] border border-dashed border-slate-200 dark:border-[#1a253e] flex items-center justify-between text-xs text-slate-400 dark:text-slate-500">
+                  <div className="flex items-center gap-2">
+                    <Layers className="h-4 w-4 text-slate-400" />
+                    <span className="font-semibold text-slate-600 dark:text-slate-400">5. Featured Projects & Portfolio</span>
+                  </div>
+                  <span className="text-[11px] italic bg-slate-100 dark:bg-[#141b2e] px-2 py-0.5 rounded-md border border-slate-200/50 dark:border-[#1c2742]">
+                    No public projects or repositories listed • No penalty
+                  </span>
+                </div>
+              )}
+
+              {/* 6) Skills & Evidence Verification */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-2">
+                    <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    <span>6. Skills & Evidence Verification</span>
+                  </h4>
+                  {selectedCandidate.skills && selectedCandidate.skills.length > 0 && (
+                    <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-200/60 dark:border-emerald-900/40">
+                      {selectedCandidate.skills.length} verified skills
+                    </span>
+                  )}
+                </div>
+
+                {/* Extracted Profile Skills */}
+                {selectedCandidate.skills && selectedCandidate.skills.length > 0 ? (
+                  <div className="p-3.5 rounded-xl bg-white dark:bg-[#0f172a] border border-slate-200/80 dark:border-[#1d2946] shadow-2xs space-y-2">
+                    <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Extracted Skills:</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {selectedCandidate.skills.map((skill, i) => (
+                        <span
+                          key={i}
+                          className="px-2.5 py-1 rounded-lg bg-indigo-50/70 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800/60 text-[11px] font-medium shadow-2xs"
+                        >
+                          {skill}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-xl bg-slate-50/60 dark:bg-[#0c1222] border border-dashed border-slate-200 dark:border-[#1a253e] text-[11px] text-slate-400 italic">
+                    No standalone skill chips indexed on public profile (Technical skills evaluated from role title, responsibilities & domain keywords)
+                  </div>
+                )}
+
+                {/* Verified Evidence Citations */}
+                {selectedCandidate.evidence_quotes && selectedCandidate.evidence_quotes.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Verified Evidence Citations:</div>
+                    <div className="space-y-2">
+                      {selectedCandidate.evidence_quotes.map((item, i) => (
+                        <div key={i} className="p-3.5 rounded-xl bg-white dark:bg-[#0f172a] border border-slate-200/80 dark:border-[#1d2946] text-xs shadow-2xs space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-bold text-indigo-700 dark:text-indigo-300 text-xs">{item.requirement}</span>
+                            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono font-semibold bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-md border border-emerald-200/60 dark:border-emerald-800/40 shrink-0">
+                              {Math.round(item.confidence * 100)}% Confidence
+                            </span>
+                          </div>
+                          <p className="text-slate-600 dark:text-slate-300 italic text-[11px] leading-relaxed bg-slate-50 dark:bg-[#0a0f1d] p-2.5 rounded-lg border border-slate-100 dark:border-[#162035]">
+                            “{item.quote}”
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Unverified Role Requirements */}
+                {selectedCandidate.missing_skills?.length > 0 && (
+                  <div className="p-3.5 rounded-xl bg-rose-50/40 dark:bg-[#1a0f14] border border-rose-200/60 dark:border-[#381622] space-y-2">
+                    <div className="text-[11px] font-semibold text-rose-700 dark:text-rose-400">Unverified Role Requirements:</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {selectedCandidate.missing_skills.map((skill, i) => (
+                        <span
+                          key={i}
+                          className="px-2.5 py-0.5 rounded-lg bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300 border border-rose-200 dark:border-rose-500/20 text-xs font-semibold"
+                        >
+                          {skill}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {selectedCandidate.missing_skills?.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-                    Unverified Requirements
-                  </h4>
-                  <div className="flex flex-wrap gap-1.5">
-                    {selectedCandidate.missing_skills.map((skill, i) => (
-                      <span
-                        key={i}
-                        className="px-2.5 py-0.5 rounded-lg bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300 border border-rose-200 dark:border-rose-500/20 text-xs font-semibold"
-                      >
-                        {skill}
-                      </span>
+              {/* 7) Recent Activity & Engagement */}
+              {selectedCandidate.recent_activity && selectedCandidate.recent_activity.length > 0 ? (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-2">
+                      <Clock className="h-4 w-4 text-emerald-500 shrink-0" />
+                      <span>7. Recent Activity & Public Engagement</span>
+                    </h4>
+                  </div>
+                  <div className="space-y-2">
+                    {selectedCandidate.recent_activity.map((act, i) => (
+                      <div key={i} className="p-3.5 rounded-xl bg-white dark:bg-[#0f172a] border border-slate-200/80 dark:border-[#1d2946] text-xs shadow-2xs space-y-1">
+                        <div className="flex items-center justify-between mb-0.5">
+                          <span className="font-semibold text-emerald-700 dark:text-emerald-400 text-[11px]">{act.engagement_type || "Post / Activity"}</span>
+                          {act.date && <span className="text-[10px] text-slate-400 font-mono">{act.date}</span>}
+                        </div>
+                        {act.post_snippet && <p className="text-slate-600 dark:text-slate-300 text-[11px] italic mt-0.5">“{act.post_snippet}”</p>}
+                      </div>
                     ))}
                   </div>
+                </div>
+              ) : (
+                <div className="p-3.5 rounded-xl bg-slate-50/60 dark:bg-[#0c1222] border border-dashed border-slate-200 dark:border-[#1a253e] flex items-center justify-between text-xs text-slate-400 dark:text-slate-500">
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-slate-400" />
+                    <span className="font-semibold text-slate-600 dark:text-slate-400">7. Recent Activity & Engagement</span>
+                  </div>
+                  <span className="text-[11px] italic bg-slate-100 dark:bg-[#141b2e] px-2 py-0.5 rounded-md border border-slate-200/50 dark:border-[#1c2742]">
+                    No public posts or comments shared
+                  </span>
                 </div>
               )}
 
@@ -2832,7 +4897,7 @@ export default function Home() {
                   href={selectedCandidate.canonical_url}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700"
+                  className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 hover:underline"
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
                   <span>View Public Profile ({selectedCandidate.canonical_url})</span>
@@ -2840,25 +4905,86 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="p-4 border-t border-slate-100 dark:border-[#18233c] bg-slate-50/50 dark:bg-[#0a0f1d] flex items-center justify-between">
-              <button
-                onClick={() => handleUpdateStatus(selectedCandidate.id, "Not a Fit")}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-rose-600 bg-rose-50 border border-rose-200 hover:bg-rose-100 transition-colors"
-              >
-                Mark Not a Fit
-              </button>
+            {/* Modal Action Buttons Footer */}
+            <div className="p-4 border-t border-slate-200/80 dark:border-[#18233c] bg-slate-50/80 dark:bg-[#0a0f1d] flex flex-wrap items-center justify-between gap-3 shrink-0">
+              {/* Left: Secondary Triage Actions */}
               <div className="flex items-center gap-2">
+                {/* Delete Candidate Button */}
                 <button
-                  onClick={() => handleUpdateStatus(selectedCandidate.id, "In Review")}
-                  className="px-4 py-2 rounded-xl text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 hover:bg-amber-100 transition-colors"
+                  type="button"
+                  onClick={() => handleDeleteCandidate(selectedCandidate.id)}
+                  className="h-9 w-9 rounded-xl flex items-center justify-center bg-white dark:bg-[#141b2e] border border-slate-200 dark:border-[#1d2740] text-slate-400 hover:text-rose-600 hover:bg-rose-50/80 dark:hover:bg-rose-950/30 hover:border-rose-200 dark:hover:border-rose-900/50 transition-colors shadow-2xs cursor-pointer"
+                  title="Remove candidate from database and shortlist"
+                  aria-label="Remove candidate"
                 >
-                  Mark In Review
+                  <Trash2 className="h-4 w-4 text-rose-500" />
                 </button>
+
+                {/* Mark Not a Fit Button */}
                 <button
-                  onClick={() => handleUpdateStatus(selectedCandidate.id, "Shortlisted")}
-                  className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 shadow-md shadow-emerald-600/20 transition-all"
+                  type="button"
+                  onClick={() => handleUpdateStatus(selectedCandidate.id, "Not a Fit")}
+                  className={`h-9 px-3.5 rounded-xl text-xs font-bold transition-all shadow-2xs flex items-center gap-1.5 cursor-pointer ${
+                    selectedCandidate.status === "Not a Fit"
+                      ? "bg-rose-600 text-white border border-rose-600"
+                      : "text-rose-700 dark:text-rose-400 bg-rose-50/80 hover:bg-rose-100 dark:bg-rose-950/30 dark:hover:bg-rose-900/40 border border-rose-200 dark:border-rose-900/50"
+                  }`}
+                  title="Mark candidate as Not a Fit"
                 >
-                  Shortlist Candidate
+                  <X className="h-3.5 w-3.5" />
+                  <span>Mark Not a Fit</span>
+                </button>
+
+                {/* Mark In Review Button */}
+                <button
+                  type="button"
+                  onClick={() => handleUpdateStatus(selectedCandidate.id, "In Review")}
+                  className={`h-9 px-3.5 rounded-xl text-xs font-bold transition-all shadow-2xs flex items-center gap-1.5 cursor-pointer ${
+                    selectedCandidate.status === "In Review"
+                      ? "bg-amber-600 text-white border border-amber-600"
+                      : "text-amber-800 dark:text-amber-300 bg-amber-50/80 hover:bg-amber-100 dark:bg-amber-950/30 dark:hover:bg-amber-900/40 border border-amber-200 dark:border-amber-900/50"
+                  }`}
+                  title="Mark candidate as In Review"
+                >
+                  <Clock className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                  <span>Mark In Review</span>
+                </button>
+              </div>
+
+              {/* Right: Primary Actions */}
+              <div className="flex items-center gap-2.5">
+                {/* Re-evaluate Button with compact role indicator */}
+                <button
+                  type="button"
+                  onClick={() => handleEvaluateSingleCandidate(selectedCandidate, evalTargetRole || selectedCandidate.target_role || jobRequirements.jobTitle)}
+                  disabled={evaluatingCandidateId === selectedCandidate.id}
+                  className="h-9 px-3.5 rounded-xl text-xs font-bold text-indigo-700 hover:text-indigo-800 dark:text-indigo-200 bg-indigo-50 hover:bg-indigo-100/80 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/50 border border-indigo-200 dark:border-indigo-800/80 transition-all flex items-center gap-1.5 disabled:opacity-50 shadow-2xs cursor-pointer"
+                  title={`Evaluate evidence against ${evalTargetRole || selectedCandidate.target_role || "target role"}`}
+                >
+                  <Sparkles className={`h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400 ${evaluatingCandidateId === selectedCandidate.id ? "animate-spin" : ""}`} />
+                  <span>
+                    {evaluatingCandidateId === selectedCandidate.id
+                      ? "Evaluating..."
+                      : selectedCandidate.skill_match != null
+                      ? "Re-evaluate"
+                      : "Evaluate"}
+                  </span>
+                  {evalTargetRole || selectedCandidate.target_role ? (
+                    <span className="max-w-[110px] truncate text-[10px] font-medium text-indigo-500/90 dark:text-indigo-300/80 bg-white/70 dark:bg-black/20 px-1.5 py-0.5 rounded border border-indigo-100 dark:border-indigo-900/40">
+                      {evalTargetRole || selectedCandidate.target_role}
+                    </span>
+                  ) : null}
+                </button>
+
+                {/* Shortlist Candidate CTA */}
+                <button
+                  type="button"
+                  onClick={() => handleUpdateStatus(selectedCandidate.id, "Shortlisted")}
+                  className="h-9 px-5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-md shadow-emerald-600/20 hover:shadow-emerald-600/30 border border-emerald-500/30 transition-all flex items-center gap-1.5 cursor-pointer"
+                  title="Shortlist this candidate"
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>{selectedCandidate.status === "Shortlisted" ? "Shortlisted ✓" : "Shortlist Candidate"}</span>
                 </button>
               </div>
             </div>
@@ -2879,14 +5005,14 @@ export default function Home() {
                 <div>
                   <div className="flex items-center gap-2">
                     <h3 className="text-base font-black text-slate-900 dark:text-white">
-                      Sourcing Intelligence & SQLite Database Report
+                      Sourcing Intelligence & Shortlist Analytics
                     </h3>
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30">
-                      WAL Mode Active
+                      Live Synced
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Local persistent storage: <code className="text-indigo-600 dark:text-indigo-400 font-mono">data/hiring_desk.db</code>
+                    Verified candidate pool & criteria evaluation distribution
                   </p>
                 </div>
               </div>
@@ -2903,7 +5029,7 @@ export default function Home() {
               {loadingReport ? (
                 <div className="flex flex-col items-center justify-center py-16 space-y-3">
                   <RefreshCw className="h-8 w-8 animate-spin text-indigo-600" />
-                  <p className="text-xs font-semibold text-slate-500">Querying SQLite database records...</p>
+                  <p className="text-xs font-semibold text-slate-500">Loading candidate records...</p>
                 </div>
               ) : (
                 <>
@@ -2914,7 +5040,7 @@ export default function Home() {
                       <div className="text-2xl font-black text-slate-900 dark:text-white">
                         {reportData?.total_candidates_harvested || candidateList.length}
                       </div>
-                      <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1">Saved to SQLite</div>
+                      <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1">Profiles Saved</div>
                     </div>
                     <div className="p-4 rounded-2xl bg-slate-50 dark:bg-[#090e1c] border border-slate-200/80 dark:border-[#19243d]">
                       <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">Evaluations Stored</div>
@@ -2933,7 +5059,11 @@ export default function Home() {
                     <div className="p-4 rounded-2xl bg-slate-50 dark:bg-[#090e1c] border border-slate-200/80 dark:border-[#19243d]">
                       <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">Average Match Score</div>
                       <div className="text-2xl font-black text-indigo-600 dark:text-indigo-400">
-                        {reportData?.average_fit_score || 83.4}%
+                        {reportData?.average_fit_score !== undefined && reportData?.average_fit_score !== null
+                          ? `${reportData.average_fit_score}%`
+                          : candidateList.filter((c) => c.skill_match != null).length > 0
+                          ? `${Math.round(candidateList.filter((c) => c.skill_match != null).reduce((acc, c) => acc + c.skill_match, 0) / candidateList.filter((c) => c.skill_match != null).length)}%`
+                          : "—"}
                       </div>
                       <div className="text-[10px] text-slate-400 font-semibold mt-1">Normalized Fit</div>
                     </div>
@@ -2974,7 +5104,7 @@ export default function Home() {
                     <div className="flex items-center justify-between mb-2.5">
                       <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-2">
                         <Users className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
-                        Persisted Profiles in SQLite ({reportData?.all_candidates?.length || candidateList.length})
+                        Verified Candidate Profiles ({reportData?.all_candidates?.length || candidateList.length})
                       </h4>
                       <span className="text-[11px] text-slate-400">Click row to review full evidence</span>
                     </div>
@@ -3036,7 +5166,7 @@ export default function Home() {
                     document.body.appendChild(downloadAnchor);
                     downloadAnchor.click();
                     downloadAnchor.remove();
-                    addTelemetryLog("Exported full SQLite sourcing report to JSON!", "file");
+                    addTelemetryLog("Exported full sourcing report to JSON!", "file");
                   }}
                   className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition-all"
                 >

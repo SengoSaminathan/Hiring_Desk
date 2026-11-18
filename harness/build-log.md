@@ -328,4 +328,48 @@ This log records observed progress and verification evidence. It is not a plan. 
   - `GET /api/health`: 200 OK (`healthy`).
 - **Status:** Complete. Bot detection mitigated, Chrome first launch resolved, and real LinkedIn sourcing active for Mode A and Mode B.
 
+## 2026-11-18 — Sourcing Wizard Step 3 Unlocking, ReferenceError Fix, Candidate Score Carousel Smooth Scrolling, and Location Drift Elimination
+- **Status:** Complete
+- **Issues Resolved:**
+  1. *Step 3 Locked / Stale State After Uploading New CV:*
+     - When uploading a new JD/CV (e.g. `Senior_AI_Lead_Job_Description.docx`), Step 3 remained locked in the previous session's completed state (`Done! Harvested 5 profiles... 100%`) with checkmarks and telemetry, and the footer showed only "View Shortlist".
+     - *Fix:* Added `handleOpenWizard(step)` resetting `sessionState="idle"`, `sessionProgress=0`, `executionStats={0}`, `activeSessionId=null`, and `sessionError=null`. Wired resets into `handleDocumentUpload`, `handleClearForm`, `handleStep1Next`, and `handleStep2Next`. Added "Configure Fresh Search" button and ensured primary "Start Autonomous Sourcing" button is always executable.
+  2. *Runtime ReferenceError:*
+     - Step 3 error retry button threw `ReferenceError: handleStartSourcing is not defined at Home (src/app/page.js:3854:42)`.
+     - *Fix:* Replaced reference with `onClick={() => handleLaunchSourcing(searchMode)}`.
+  3. *Target Profiles Count Pill Duplication:*
+     - The target count selector rendered `5` twice (`[5] [5] [10] [15] [25] [50]`).
+     - *Fix:* Separated preset pills `[5, 10, 15, 25, 50]` from the custom input box `Custom: [ 5 ]`.
+  4. *Score Analysis Sub-Sections & Mouse Wheel Scrolling:*
+     - Score categories carousel container used `snap-mandatory`, which fought fractional mouse wheel delta events and snapped back to origin.
+     - *Fix:* Changed container to `snap-proximity`, attached `scoreSectionRef` to outer category card container, and updated `handleScoreWheel` to smoothly scroll by 190px card increments via `container.scrollBy({ left: step, behavior: "smooth" })`.
+  5. *Location Drift & Requisition Evaluation Sync:*
+     - Configured locations (Coimbatore, Tamil Nadu) were drifting to Dubai in query relaxation and candidate evaluations, and candidates in table showed `General Requisition` with `Pending Eval`.
+     - *Fix:* Added `location: Optional[str]` field to `StructuredJobCriteria`, added safe `getattr` fallbacks in `ai_service.py`, forwarded user-specified location in all evaluation calls, and re-fetched candidates from SQLite after evaluation.
+- **Verification:**
+  - `pytest backend/tests/test_candidate_evaluation_improvements.py backend/tests/test_query_sourcing_fix.py backend/tests/test_candidate_extraction.py -v`: 26 passed in 27.11s (100% pass rate).
+  - Next.js Turbopack compilation: 0 runtime errors, `page.js` clean and verified.
+
+## 2026-11-18 — LinkedIn Sourcing Geographic Integrity, Role Requisition Sync, and Skill Chip Sanitization
+- **Status:** Complete
+- **Issues Addressed & Solutions:**
+  1. *Preferred Location Preservation in LinkedIn Query Relaxation:*
+     - When search returned 0 results on LinkedIn, progressive query relaxation previously stripped target locations or diluted them with broad country catch-alls (`OR "India"` matching everyone in Mumbai/Delhi when searching for Chennai/Coimbatore).
+     - *Fix:* In `ai_service.py:_build_location_clause`, separated local city/state tokens from broad country tokens. When specific cities or states are given (e.g. `Chennai`, `Coimbatore`, `Tamil Nadu`), broad country tokens (`India`) are strictly excluded, and city/regional synonyms are expanded (e.g. `("Chennai" OR "Madras" OR "Tamil Nadu" OR "Tamilnadu")`, `("Coimbatore" OR "Kovai" OR "Tamil Nadu" OR "Tamilnadu")`).
+     - In `optimize_sourcing_query`, all 3 relaxation attempts (`domain_only_relaxation`, `core_anchor_relaxation`, `plain_keyword_relaxation`) strictly enforce the target location clause and will NEVER search without the user's preferred location.
+  2. *Geographic Guard for Harvested LinkedIn Candidate Cards:*
+     - Broad LinkedIn search algorithms occasionally bleed through foreign candidates (e.g. candidates in Dubai, UAE, Egypt, or the US).
+     - *Fix:* Added `is_card_geographically_compatible` and `score_card_geographic_relevance` in `browser_service.py`. When searching for Indian roles, candidate cards located in foreign countries without Indian presence are automatically filtered out, and local candidates matching the city/state are sorted to the top.
+  3. *Requisition Sync & Target Role Preservation:*
+     - In `backend/app/api/jobs.py` (`generate_queries`), the configured job is automatically saved to SQLite with its latest edited title and location.
+     - In `backend/app/api/sourcing.py` (`start_sourcing_session`), if `role_title`, `preferred_locations`, or `location` are omitted or default to generic values, they are automatically retrieved from the active job in SQLite, preventing candidates from displaying "General Requisition" or drifting to Dubai.
+  4. *Overpopulated Skills Chips Prevention:*
+     - Uploading a JD previously generated up to 37 skill chips because raw responsibilities, soft skills, and entire sentences were extracted into chips.
+     - *Fix:* Enforced `_clean_skill_tokens` in `ai_service.py` with `max_tokens=10` for mandatory skills and `max_tokens=8` for preferred skills. Strips behavioral fluff (e.g. "relentless customer champion", "superb written & verbal communication"), removes parenthetical explanations, splits compound phrases, and bounds word lengths, producing concise, high-signal chips (verified on `Senior_Product_Manager_AI_SaaS_Job_Description.docx` reducing 37 chips to exactly 10 mandatory and 6 preferred).
+- **Verification:**
+  - `pytest backend/tests/test_query_sourcing_fix.py -v`: 14 passed in 7.30s (100% pass rate).
+  - `pytest backend/tests/test_candidate_evaluation_improvements.py backend/tests/test_candidate_extraction.py -v`: 18 passed in 20.76s (100% pass rate).
+  - Total test suite: 32 tests passing.
+
+
 

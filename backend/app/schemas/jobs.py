@@ -14,14 +14,49 @@ class Criterion(BaseModel):
 
 
 class StructuredJobCriteria(BaseModel):
-    """Structured role requirements extracted from a raw JD."""
+    """Structured role requirements extracted from a raw JD or manual entry."""
 
     job_title: str = Field(description="Target role title")
-    seniority_level: str = Field(description="Seniority level, e.g., 'Junior', 'Mid', 'Senior', 'Staff', 'Lead'")
+    job_description: Optional[str] = Field(default=None, description="Detailed job description")
+    department: Optional[str] = Field(default=None, description="Department or business unit")
+    employment_type: Optional[str] = Field(default="Full-time", description="Employment type (Full-time, Part-time, Contract, Internship)")
+    seniority_level: str = Field(default="Senior", description="Seniority level, e.g., 'Junior', 'Mid', 'Senior', 'Staff', 'Lead'")
+    vacancies: Optional[int] = Field(default=1, description="Number of open positions")
     min_years_experience: Optional[float] = Field(default=None, description="Minimum years of experience")
+    max_years_experience: Optional[float] = Field(default=None, description="Maximum years of experience")
+    relevant_experience: Optional[str] = Field(default=None, description="Specific relevant experience criteria")
+    leadership_experience: Optional[str] = Field(default=None, description="Leadership or management experience")
     mandatory_skills: List[str] = Field(default_factory=list, description="Must-have skills")
     preferred_skills: List[str] = Field(default_factory=list, description="Nice-to-have skills")
+    technologies: List[str] = Field(default_factory=list, description="Core technologies and frameworks")
+    tools_platforms: List[str] = Field(default_factory=list, description="Tools, platforms, and infrastructure")
+    domain_expertise: List[str] = Field(default_factory=list, description="Industry or domain-specific expertise")
+    certifications: List[str] = Field(default_factory=list, description="Required or preferred certifications")
+    country: Optional[str] = Field(default=None, description="Target country")
+    state_region: Optional[str] = Field(default=None, description="State, province, or region")
+    city: Optional[str] = Field(default=None, description="Primary city")
+    location: Optional[str] = Field(default=None, description="Combined or primary location string")
+    preferred_locations: List[str] = Field(default_factory=list, description="Multiple preferred locations")
+    work_mode: Optional[str] = Field(default="Remote", description="Work mode (Remote, Hybrid, On-site)")
+    willingness_to_relocate: Optional[bool] = Field(default=False, description="Willingness to relocate required")
+    salary_range: Optional[str] = Field(default=None, description="Expected salary range")
+    notice_period: Optional[str] = Field(default=None, description="Preferred notice period")
+    education_requirements: Optional[str] = Field(default=None, description="Education or degree requirements")
+    preferred_industries: List[str] = Field(default_factory=list, description="Target or preferred industries")
+    companies_to_target: List[str] = Field(default_factory=list, description="Target companies to source from")
+    companies_to_exclude: List[str] = Field(default_factory=list, description="Companies to exclude from search")
+    additional_instructions: Optional[str] = Field(default=None, description="Specific instructions for AI search formulation")
     criteria_list: List[Criterion] = Field(default_factory=list, description="Detailed itemized criteria")
+
+
+class SearchQueryOption(BaseModel):
+    """Specific curated search query strategy."""
+
+    id: str = Field(description="Strategy identifier, e.g. 'precision', 'lateral', 'domain'")
+    label: str = Field(description="Recruiter-facing strategy label")
+    query: str = Field(description="The executable search query string")
+    description: str = Field(description="Explanation of why this query strategy was formed")
+    strategy_type: str = Field(default="Precision Stack", description="Category of the strategy")
 
 
 class SearchPlan(BaseModel):
@@ -31,6 +66,7 @@ class SearchPlan(BaseModel):
     xray_query: str = Field(description="Google X-Ray boolean search string")
     target_titles: List[str] = Field(default_factory=list, description="Alternative job titles to search")
     target_skills: List[str] = Field(default_factory=list, description="Key skills included in the search")
+    strategic_queries: List[SearchQueryOption] = Field(default_factory=list, description="3 curated strategic queries for recruiter review & edit")
 
 
 class AnalyzeJobRequest(BaseModel):
@@ -45,3 +81,31 @@ class AnalyzeJobResponse(BaseModel):
 
     criteria: StructuredJobCriteria
     search_plan: SearchPlan
+    raw_jd: Optional[str] = Field(default=None, description="Raw document text extracted from the uploaded JD")
+
+
+class GenerateQueriesRequest(BaseModel):
+    """Request to generate 3 strategic LinkedIn search queries from structured requirements."""
+
+    job_title: str
+    mandatory_skills: List[str] = Field(default_factory=list)
+    preferred_skills: List[str] = Field(default_factory=list)
+    technologies: List[str] = Field(default_factory=list)
+    tools_platforms: List[str] = Field(default_factory=list)
+    domain_expertise: List[str] = Field(default_factory=list)
+    location: Optional[str] = None
+    min_years_experience: Optional[float] = None
+    seniority_level: Optional[str] = "Senior"
+
+
+class RegenerateQueryRequest(BaseModel):
+    """Request to regenerate a single strategic search query."""
+
+    job_title: str
+    strategy_id: str  # 'precision', 'lateral', or 'domain'
+    mandatory_skills: List[str] = Field(default_factory=list)
+    preferred_skills: List[str] = Field(default_factory=list)
+    technologies: List[str] = Field(default_factory=list)
+    domain_expertise: List[str] = Field(default_factory=list)
+    location: Optional[str] = None
+
