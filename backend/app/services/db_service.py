@@ -180,6 +180,39 @@ class DatabaseService:
                 CREATE INDEX IF NOT EXISTS idx_candidates_url ON candidates(canonical_url);
                 CREATE INDEX IF NOT EXISTS idx_eval_candidate ON evaluations(candidate_id);
                 CREATE INDEX IF NOT EXISTS idx_jobs_title ON jobs(job_title);
+
+                CREATE TABLE IF NOT EXISTS companies (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    industry TEXT,
+                    website TEXT,
+                    location TEXT,
+                    employee_count TEXT,
+                    value_proposition TEXT,
+                    recruiter_name TEXT,
+                    recruiter_signature TEXT,
+                    created_by_user_id TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    full_name TEXT,
+                    first_name TEXT,
+                    last_name TEXT,
+                    role TEXT DEFAULT 'Recruiter',
+                    company_id TEXT,
+                    avatar_url TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_companies_user ON companies(created_by_user_id);
+                CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+                CREATE INDEX IF NOT EXISTS idx_users_company ON users(company_id);
             """)
 
             # Safe migration check for existing tables
@@ -216,6 +249,14 @@ class DatabaseService:
                 conn.execute("ALTER TABLE candidates ADD COLUMN domain_relevance_notes TEXT;")
             if "status" not in cols:
                 conn.execute("ALTER TABLE candidates ADD COLUMN status TEXT DEFAULT 'New';")
+            if "outreach_status" not in cols:
+                conn.execute("ALTER TABLE candidates ADD COLUMN outreach_status TEXT DEFAULT 'Unsent';")
+            if "outreach_message" not in cols:
+                conn.execute("ALTER TABLE candidates ADD COLUMN outreach_message TEXT;")
+            if "outreach_sent_at" not in cols:
+                conn.execute("ALTER TABLE candidates ADD COLUMN outreach_sent_at TIMESTAMP;")
+            if "outreach_method" not in cols:
+                conn.execute("ALTER TABLE candidates ADD COLUMN outreach_method TEXT;")
 
             eval_cols = [r[1] for r in conn.execute("PRAGMA table_info(evaluations)").fetchall()]
             if "section_scores" not in eval_cols:
@@ -563,10 +604,13 @@ class DatabaseService:
 
     def get_candidate_by_id_or_url(self, cid: str, canonical_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Retrieves a single candidate dictionary from SQLite by ID or URL."""
+        target_val = canonical_url or cid or ""
+        url_stripped = target_val.rstrip("/")
+        url_slashed = url_stripped + "/" if url_stripped else ""
         with self._get_connection() as conn:
             row = conn.execute(
-                "SELECT * FROM candidates WHERE id = ? OR canonical_url = ? OR canonical_url = ?",
-                (cid, canonical_url or cid, cid)
+                "SELECT * FROM candidates WHERE id = ? OR canonical_url = ? OR canonical_url = ? OR canonical_url = ?",
+                (cid, target_val, url_stripped, url_slashed)
             ).fetchone()
             if not row:
                 return None
@@ -597,38 +641,16 @@ class DatabaseService:
                 "raw_snippet": row["raw_snippet"],
                 "avatar_url": row["avatar_url"],
                 "target_role": row["target_role"] if "target_role" in row.keys() and row["target_role"] else "",
+                "outreach_status": row["outreach_status"] if "outreach_status" in row.keys() and row["outreach_status"] else "Unsent",
+                "outreach_message": row["outreach_message"] if "outreach_message" in row.keys() else None,
+                "outreach_sent_at": row["outreach_sent_at"] if "outreach_sent_at" in row.keys() else None,
+                "outreach_method": row["outreach_method"] if "outreach_method" in row.keys() else None,
             }
 
     def get_all_candidates(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Retrieves candidates paired with their latest evaluation from the database.
-        Prefers Supabase if configured and reachable; seamlessly falls back to SQLite."""
-        if supabase_service.is_configured():
-            try:
-                cloud_candidates = supabase_service.get_all_candidates(limit=limit)
-                if cloud_candidates is not None:
-                    # Supabase is configured and successfully reachable.
-                    # When Supabase is empty (e.g. user removed all records), purge local SQLite candidates & evaluations
-                    # so the local cache does not retain phantom records.
-                    if len(cloud_candidates) == 0:
-                        with self._get_connection() as conn:
-                            conn.execute("DELETE FROM evaluations")
-                            conn.execute("DELETE FROM candidates")
-                            conn.commit()
-                    else:
-                        # Synchronize local SQLite with Supabase: remove any local candidates that were deleted from Supabase
-                        cloud_ids = {c["id"] for c in cloud_candidates if c.get("id")}
-                        with self._get_connection() as conn:
-                            local_ids = [r[0] for r in conn.execute("SELECT id FROM candidates").fetchall()]
-                            stale_ids = [lid for lid in local_ids if lid not in cloud_ids]
-                            for sid in stale_ids:
-                                conn.execute("DELETE FROM evaluations WHERE candidate_id = ?", (sid,))
-                                conn.execute("DELETE FROM candidates WHERE id = ?", (sid,))
-                            if stale_ids:
-                                conn.commit()
-                    return cloud_candidates
-            except Exception as e:
-                logger.warning("Supabase get_all_candidates fallback to SQLite: %s", e)
-
+        Merges local SQLite storage with Supabase cloud records to ensure local/temporary
+        profiles and outreach statuses are always preserved and visible."""
         with self._get_connection() as conn:
             cursor = conn.execute("""
                 SELECT 
@@ -639,6 +661,7 @@ class DatabaseService:
                     c.experience_years, c.about, c.skills, c.experience_history,
                     c.education, c.certifications, c.projects, c.recent_activity, c.section_scores,
                     c.raw_snippet, c.avatar_url, c.target_role, c.created_at,
+                    c.outreach_status, c.outreach_message, c.outreach_sent_at, c.outreach_method,
                     e.fit_score, e.completeness_score, e.evaluation_coverage, e.match_level,
                     e.domain_relevance as eval_domain_relevance, e.domain_relevance_notes as eval_domain_notes,
                     e.location_compatibility, e.justification,
@@ -712,7 +735,59 @@ class DatabaseService:
                 "evidence_quotes": quotes,
                 "missing_criteria": missing,
                 "job_title": r["job_title"],
+                "outreach_status": (r["outreach_status"] if "outreach_status" in r.keys() and r["outreach_status"] else "Unsent"),
+                "outreach_message": (r["outreach_message"] if "outreach_message" in r.keys() else None),
+                "outreach_sent_at": (r["outreach_sent_at"] if "outreach_sent_at" in r.keys() else None),
+                "outreach_method": (r["outreach_method"] if "outreach_method" in r.keys() else None),
             })
+
+        # 2. Check Supabase cloud records and merge
+        if supabase_service.is_configured():
+            try:
+                cloud_candidates = supabase_service.get_all_candidates(limit=limit)
+                if cloud_candidates is not None and len(cloud_candidates) > 0:
+                    local_by_url = {
+                        (c.get("canonical_url") or "").rstrip("/"): c for c in results if c.get("canonical_url")
+                    }
+                    local_by_id = {str(c.get("id")): c for c in results if c.get("id")}
+                    
+                    merged_candidates = []
+                    seen_urls = set()
+                    
+                    for cc in cloud_candidates:
+                        c_url = (cc.get("canonical_url") or "").rstrip("/")
+                        c_id = str(cc.get("id") or "")
+                        local_match = local_by_url.get(c_url) or local_by_id.get(c_id)
+                        
+                        if local_match:
+                            # Enrich with outreach state and target role from local DB
+                            if not cc.get("outreach_status") or cc.get("outreach_status") == "Unsent":
+                                cc["outreach_status"] = local_match.get("outreach_status") or "Unsent"
+                            if not cc.get("outreach_message"):
+                                cc["outreach_message"] = local_match.get("outreach_message")
+                            if not cc.get("outreach_method"):
+                                cc["outreach_method"] = local_match.get("outreach_method")
+                            if not cc.get("outreach_sent_at"):
+                                cc["outreach_sent_at"] = local_match.get("outreach_sent_at")
+                            if not cc.get("target_role") or cc.get("target_role") == "Target Role":
+                                cc["target_role"] = local_match.get("target_role") or cc.get("job_title") or ""
+                        if c_url:
+                            seen_urls.add(c_url)
+                        merged_candidates.append(cc)
+                    
+                    # Prepend any local candidates that are not present in Supabase so they are always visible!
+                    for lc in results:
+                        lc_url = (lc.get("canonical_url") or "").rstrip("/")
+                        if lc_url and lc_url not in seen_urls:
+                            merged_candidates.insert(0, lc)
+                            seen_urls.add(lc_url)
+                            try:
+                                supabase_service.upsert_candidate(lc)
+                            except Exception:
+                                pass
+                    return merged_candidates
+            except Exception as e:
+                logger.warning("Supabase get_all_candidates fallback to SQLite: %s", e)
 
         return results
 
@@ -871,6 +946,47 @@ class DatabaseService:
                 supabase_service.update_candidate_status(candidate_id, new_status)
             except Exception as e:
                 logger.warning("Supabase update_candidate_status error: %s", e)
+
+        return success
+
+    def update_candidate_outreach(
+        self,
+        candidate_id: Optional[str] = None,
+        canonical_url: Optional[str] = None,
+        outreach_status: str = "Sent",
+        outreach_message: Optional[str] = None,
+        outreach_method: Optional[str] = None,
+    ) -> bool:
+        """Updates candidate outreach status, message, sent timestamp and delivery method across SQLite."""
+        success = False
+        with self._get_connection() as conn:
+            if candidate_id:
+                cursor = conn.execute(
+                    """UPDATE candidates 
+                       SET outreach_status = ?, 
+                           outreach_message = COALESCE(?, outreach_message), 
+                           outreach_sent_at = CURRENT_TIMESTAMP, 
+                           outreach_method = COALESCE(?, outreach_method),
+                           updated_at = CURRENT_TIMESTAMP 
+                       WHERE id = ?""",
+                    (outreach_status, outreach_message, outreach_method, candidate_id),
+                )
+            elif canonical_url:
+                norm_url = self.normalize_url(canonical_url)
+                cursor = conn.execute(
+                    """UPDATE candidates 
+                       SET outreach_status = ?, 
+                           outreach_message = COALESCE(?, outreach_message), 
+                           outreach_sent_at = CURRENT_TIMESTAMP, 
+                           outreach_method = COALESCE(?, outreach_method),
+                           updated_at = CURRENT_TIMESTAMP 
+                       WHERE canonical_url = ? OR canonical_url LIKE ?""",
+                    (outreach_status, outreach_message, outreach_method, canonical_url, f"%{norm_url}%"),
+                )
+            else:
+                return False
+            conn.commit()
+            success = cursor.rowcount > 0
 
         return success
 
@@ -1242,6 +1358,227 @@ Requirements:
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
             }
+
+    # =========================================================================
+    # USER & COMPANY PERSISTENCE (CLERK AUTH & RECRUITER ONBOARDING)
+    # =========================================================================
+
+    def upsert_user(self, user_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Inserts or updates a user record synced from Clerk signup/login.
+        
+        Links existing company if created_by_user_id matches, and syncs to Supabase.
+        """
+        uid = (user_data.get("id") or "").strip()
+        email = (user_data.get("email") or user_data.get("email_address") or "").strip().lower()
+        if not uid or not email:
+            raise ValueError("User id and valid email are required to upsert user.")
+
+        full_name = (user_data.get("full_name") or user_data.get("name") or "").strip()
+        first_name = (user_data.get("first_name") or "").strip()
+        last_name = (user_data.get("last_name") or "").strip()
+        if not full_name and (first_name or last_name):
+            full_name = f"{first_name} {last_name}".strip()
+        elif full_name and not first_name:
+            parts = full_name.split(" ", 1)
+            first_name = parts[0]
+            last_name = parts[1] if len(parts) > 1 else ""
+
+        role = user_data.get("role") or "Recruiter"
+        company_id = user_data.get("company_id")
+        avatar_url = user_data.get("avatar_url") or user_data.get("image_url")
+
+        with self._get_connection() as conn:
+            # Check if user already exists
+            existing = conn.execute("SELECT * FROM users WHERE id = ? OR email = ?", (uid, email)).fetchone()
+
+            # If user has no company_id yet, see if there's a company created by this user
+            if not company_id:
+                comp_row = conn.execute(
+                    "SELECT id FROM companies WHERE created_by_user_id = ? ORDER BY updated_at DESC LIMIT 1",
+                    (uid,)
+                ).fetchone()
+                if comp_row:
+                    company_id = comp_row["id"]
+                elif existing and existing["company_id"]:
+                    company_id = existing["company_id"]
+
+            conn.execute("""
+                INSERT INTO users (id, email, full_name, first_name, last_name, role, company_id, avatar_url, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET
+                    email = excluded.email,
+                    full_name = COALESCE(NULLIF(excluded.full_name, ''), users.full_name),
+                    first_name = COALESCE(NULLIF(excluded.first_name, ''), users.first_name),
+                    last_name = COALESCE(NULLIF(excluded.last_name, ''), users.last_name),
+                    role = COALESCE(excluded.role, users.role),
+                    company_id = COALESCE(excluded.company_id, users.company_id),
+                    avatar_url = COALESCE(excluded.avatar_url, users.avatar_url),
+                    updated_at = CURRENT_TIMESTAMP
+            """, (uid, email, full_name, first_name, last_name, role, company_id, avatar_url))
+            conn.commit()
+
+            # Retrieve fresh record
+            user_row = conn.execute("""
+                SELECT u.*, c.name as company_name, c.industry as company_industry, c.location as company_location
+                FROM users u
+                LEFT JOIN companies c ON u.company_id = c.id
+                WHERE u.id = ?
+            """, (uid,)).fetchone()
+
+            result = dict(user_row) if user_row else {
+                "id": uid, "email": email, "full_name": full_name, "first_name": first_name,
+                "last_name": last_name, "role": role, "company_id": company_id, "avatar_url": avatar_url
+            }
+
+        # Best-effort sync to Supabase if configured
+        if supabase_service.is_configured():
+            try:
+                supabase_service.upsert_user(result)
+            except Exception as e:
+                logger.warning("Optional Supabase user sync warning: %s", e)
+
+        logger.info("Upserted user in DB: %s (%s)", email, uid)
+        return result
+
+    def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves user profile and linked company details by user ID or email."""
+        if not user_id:
+            return None
+        with self._get_connection() as conn:
+            row = conn.execute("""
+                SELECT u.*, c.name as company_name, c.industry as company_industry, c.location as company_location
+                FROM users u
+                LEFT JOIN companies c ON u.company_id = c.id
+                WHERE u.id = ? OR LOWER(u.email) = LOWER(?)
+                LIMIT 1
+            """, (user_id.strip(), user_id.strip())).fetchone()
+            return dict(row) if row else None
+
+    def upsert_company(self, company_data: Dict[str, Any], user_id: Optional[str] = None) -> Dict[str, Any]:
+        """Inserts or updates a company profile, linking it to the creator user."""
+        name = (company_data.get("name") or company_data.get("companyName") or company_data.get("company_name") or "").strip()
+        if not name:
+            raise ValueError("Company name is required.")
+
+        cid = (company_data.get("id") or "").strip()
+        uid = (user_id or company_data.get("created_by_user_id") or company_data.get("user_id") or "").strip() or None
+
+        with self._get_connection() as conn:
+            # If no company id passed, check if the user already has a company
+            if not cid and uid:
+                existing_user = conn.execute("SELECT company_id FROM users WHERE id = ?", (uid,)).fetchone()
+                if existing_user and existing_user["company_id"]:
+                    cid = existing_user["company_id"]
+                else:
+                    existing_comp = conn.execute(
+                        "SELECT id FROM companies WHERE created_by_user_id = ? ORDER BY updated_at DESC LIMIT 1",
+                        (uid,)
+                    ).fetchone()
+                    if existing_comp:
+                        cid = existing_comp["id"]
+
+            # If still no cid, generate one
+            if not cid:
+                cid = f"comp_{int(time.time() * 1000)}"
+
+            industry = (company_data.get("industry") or "").strip()
+            website = (company_data.get("website") or "").strip()
+            location = (company_data.get("location") or "").strip()
+            employee_count = (company_data.get("employee_count") or company_data.get("employeeCount") or "50-250").strip()
+            value_prop = (
+                company_data.get("value_proposition")
+                or company_data.get("valueProposition")
+                or company_data.get("companyDetails")
+                or company_data.get("company_details")
+                or ""
+            ).strip()
+            recruiter_name = (company_data.get("recruiter_name") or company_data.get("recruiterName") or "").strip()
+            recruiter_sig = (
+                company_data.get("recruiter_signature")
+                or company_data.get("recruiterSignature")
+                or (f"{recruiter_name} | Talent Acquisition at {name}" if recruiter_name else "")
+            ).strip()
+
+            conn.execute("""
+                INSERT INTO companies (
+                    id, name, industry, website, location, employee_count,
+                    value_proposition, recruiter_name, recruiter_signature,
+                    created_by_user_id, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    industry = COALESCE(NULLIF(excluded.industry, ''), companies.industry),
+                    website = COALESCE(NULLIF(excluded.website, ''), companies.website),
+                    location = COALESCE(NULLIF(excluded.location, ''), companies.location),
+                    employee_count = COALESCE(NULLIF(excluded.employee_count, ''), companies.employee_count),
+                    value_proposition = COALESCE(NULLIF(excluded.value_proposition, ''), companies.value_proposition),
+                    recruiter_name = COALESCE(NULLIF(excluded.recruiter_name, ''), companies.recruiter_name),
+                    recruiter_signature = COALESCE(NULLIF(excluded.recruiter_signature, ''), companies.recruiter_signature),
+                    created_by_user_id = COALESCE(excluded.created_by_user_id, companies.created_by_user_id),
+                    updated_at = CURRENT_TIMESTAMP
+            """, (cid, name, industry, website, location, employee_count, value_prop, recruiter_name, recruiter_sig, uid))
+
+            # Link company to user if user_id is provided
+            if uid:
+                conn.execute(
+                    "UPDATE users SET company_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (cid, uid)
+                )
+
+            conn.commit()
+
+            row = conn.execute("SELECT * FROM companies WHERE id = ?", (cid,)).fetchone()
+            result = dict(row) if row else {
+                "id": cid, "name": name, "industry": industry, "website": website,
+                "location": location, "employee_count": employee_count,
+                "value_proposition": value_prop, "recruiter_name": recruiter_name,
+                "recruiter_signature": recruiter_sig, "created_by_user_id": uid
+            }
+
+        # Best-effort sync to Supabase if configured
+        if supabase_service.is_configured():
+            try:
+                supabase_service.upsert_company(result)
+            except Exception as e:
+                logger.warning("Optional Supabase company sync warning: %s", e)
+
+        logger.info("Upserted company in DB: %s (%s)", name, cid)
+        return result
+
+    def get_company_profile(
+        self,
+        user_id: Optional[str] = None,
+        company_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieves company profile by company_id, user_id, or most recently updated company."""
+        clean_cid = company_id.strip() if isinstance(company_id, str) and company_id.strip() else None
+        clean_uid = user_id.strip() if isinstance(user_id, str) and user_id.strip() else None
+
+        with self._get_connection() as conn:
+            if clean_cid:
+                row = conn.execute("SELECT * FROM companies WHERE id = ? LIMIT 1", (clean_cid,)).fetchone()
+                if row:
+                    return dict(row)
+
+            if clean_uid:
+                # Find company linked via user
+                u_row = conn.execute("SELECT company_id FROM users WHERE id = ? LIMIT 1", (clean_uid,)).fetchone()
+                if u_row and u_row["company_id"]:
+                    row = conn.execute("SELECT * FROM companies WHERE id = ? LIMIT 1", (u_row["company_id"],)).fetchone()
+                    if row:
+                        return dict(row)
+                # Or find company created by user
+                row = conn.execute(
+                    "SELECT * FROM companies WHERE created_by_user_id = ? ORDER BY updated_at DESC LIMIT 1",
+                    (clean_uid,)
+                ).fetchone()
+                if row:
+                    return dict(row)
+
+            # Fallback: get the most recently updated company
+            row = conn.execute("SELECT * FROM companies ORDER BY updated_at DESC LIMIT 1").fetchone()
+            return dict(row) if row else None
 
 
 db_service = DatabaseService()

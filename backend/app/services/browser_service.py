@@ -124,6 +124,52 @@ def is_card_geographically_compatible(cand_loc: str, target_locations: Optional[
     return True
 
 
+def is_executive_or_founder(headline: str, role_title: Optional[str] = None) -> bool:
+    """Detects whether a candidate profile headline indicates an active Founder, CEO, or business owner.
+
+    Agency owners, startup founders, and active CEOs are not suitable candidates for standard
+    employee/individual contributor/engineering lead requisitions.
+    """
+    if not headline:
+        return False
+
+    # If the requisition itself is specifically seeking a CEO or Founder, allow them
+    if role_title:
+        r_lower = role_title.lower()
+        if any(k in r_lower for k in ("ceo", "chief executive officer", "founder", "managing director", "president")):
+            return False
+
+    h_lower = headline.lower()
+
+    # Strip past/former experiences from consideration (e.g. "Ex-Founder @ X", "Former CEO")
+    cleaned_h = re.sub(
+        r"\b(?:ex[\s\-]?(?:founder|ceo|co-founder|cofounder|owner|managing director)|former[\s\-]+(?:founder|ceo|co-founder|cofounder|owner|managing director))\b",
+        "",
+        h_lower,
+    )
+
+    # Active Founder, CEO, Owner patterns
+    EXEC_PATTERNS = [
+        r"\bfounder\s*[/&|\+]\s*ceo\b",
+        r"\bceo\s*[/&|\+]\s*founder\b",
+        r"\bco-?founder\s*[/&|\+]\s*ceo\b",
+        r"\bco-?founder\b",
+        r"\bfounder\b",
+        r"\bceo\b",
+        r"\bchief executive officer\b",
+        r"\bmanaging director\b",
+        r"\bagency owner\b",
+        r"\bbusiness owner\b",
+        r"\bproprietor\b",
+    ]
+
+    for pat in EXEC_PATTERNS:
+        if re.search(pat, cleaned_h):
+            return True
+
+    return False
+
+
 def score_card_geographic_relevance(cand_loc: str, target_locations: Optional[List[str]] = None) -> int:
     """Computes a sorting score for candidate cards to prioritize local candidates matching target city/state."""
     if not target_locations or not cand_loc:
@@ -131,15 +177,28 @@ def score_card_geographic_relevance(cand_loc: str, target_locations: Optional[Li
     cand_loc_lower = cand_loc.lower().strip()
     target_locs_lower = [t.lower().strip() for t in target_locations if t and t.strip()]
 
-    # Direct city or specific token match
+    BROAD_REGIONS = {
+        "india", "united states", "usa", "remote", "flexible", "any",
+        "tamil nadu", "tamilnadu", "karnataka", "telangana", "maharashtra",
+        "united arab emirates", "uae"
+    }
+    city_targets = [t for t in target_locs_lower if t not in BROAD_REGIONS]
+
+    # 1. Exact city match (e.g. "Chennai", "Coimbatore", "Dubai", "Bangalore")
+    for c in city_targets:
+        if c in cand_loc_lower:
+            return 100  # Highest priority: exact city match
+
+    # 2. Regional / state match (e.g. "Tamil Nadu", "Karnataka")
     for t in target_locs_lower:
-        if t in cand_loc_lower and t not in ("india", "united states", "remote"):
-            return 100  # Exact local city/state match
+        if t in cand_loc_lower and t not in ("india", "united states", "remote", "flexible", "any"):
+            return 75  # Regional state match
 
+    # 3. Country match
     if any(t in cand_loc_lower for t in target_locs_lower):
-        return 75  # Regional / country match
+        return 50
 
-    return 50
+    return 25
 
 
 class LiveSourcingTracker:
@@ -909,6 +968,14 @@ class _LinkedInBrowserEngine:
                         if db_service.is_candidate_duplicate(c.canonical_url, c.name, {"urls": known_urls, "names": known_names}):
                             duplicate_cards.append(c)
                         else:
+                            # Filter out active Founder / CEO / Business Owner profiles for employee roles
+                            if is_executive_or_founder(c.headline, role_title):
+                                logger.info(
+                                    "Filtered out executive/founder profile '%s' (%s) for employee role '%s'",
+                                    c.name, c.headline, role_title
+                                )
+                                continue
+
                             card_loc = c.location or c.current_location or ""
                             if effective_targets and not is_card_geographically_compatible(card_loc, effective_targets):
                                 logger.info(
@@ -974,6 +1041,14 @@ class _LinkedInBrowserEngine:
                                     cand = await self._visit_and_extract_profile(page, cand)
                                 except Exception as deep_err:
                                     logger.warning("Deep extraction failed on %s (%s): %s. Preserving card data.", cand.name, cand.canonical_url, deep_err)
+
+                            # Reject if deep extraction revealed candidate is active Founder/CEO for an employee role
+                            if is_executive_or_founder(cand.headline, role_title):
+                                logger.info(
+                                    "Deep extraction revealed executive/founder profile '%s' (%s) for role '%s'. Skipping candidate.",
+                                    cand.name, cand.headline, role_title
+                                )
+                                continue
 
                             if not cand.avatar_url:
                                 cand.avatar_url = VERIFIED_AVATARS[len(harvested_candidates) % len(VERIFIED_AVATARS)]
@@ -3603,7 +3678,7 @@ class _LinkedInBrowserEngine:
                     if (!hud) {{
                         hud = document.createElement('div');
                         hud.id = 'hiring-desk-live-hud';
-                        hud.style.cssText = 'position:fixed;top:16px;right:20px;z-index:9999999;background:rgba(15,23,42,0.95);border:1.5px solid #3b82f6;color:#ffffff;padding:14px 20px;border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,0.6);font-family:system-ui,-apple-system,sans-serif;font-size:13px;max-width:380px;';
+                        hud.style.cssText = 'position:fixed;top:16px;right:20px;z-index:9999999;pointer-events:none;background:rgba(15,23,42,0.95);border:1.5px solid #3b82f6;color:#ffffff;padding:14px 20px;border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,0.6);font-family:system-ui,-apple-system,sans-serif;font-size:13px;max-width:380px;';
                         document.body.appendChild(hud);
                     }}
                     hud.innerHTML = `
@@ -3895,6 +3970,653 @@ class _LinkedInBrowserEngine:
             "message": "✅ LinkedIn login verified! AI Agent taking control...",
         }
 
+    async def _is_connection_pending(self, page) -> bool:
+        """Scans buttons, links, and action elements for text or aria-label containing 'pending' (case-insensitive)."""
+        try:
+            is_pending = await page.evaluate("""
+                () => {
+                    const elements = Array.from(document.querySelectorAll(
+                        'button, a, [role="button"], div.pvs-profile-actions *, div.pv-top-card-v2-ctas *'
+                    ));
+                    return elements.some(el => {
+                        const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+                        const aria = (el.getAttribute('aria-label') || '').trim().toLowerCase();
+                        return text === 'pending' || text.includes('pending') || aria.includes('pending');
+                    });
+                }
+            """)
+            if is_pending:
+                return True
+        except Exception as e:
+            logger.debug("Error in JS pending detection: %s", e)
+
+        try:
+            pending_el = await page.query_selector(
+                "div.pv-top-card-v2-ctas button:has-text('Pending'), div.pvs-profile-actions button:has-text('Pending'), button:has-text('Pending')"
+            )
+            if pending_el:
+                return True
+        except Exception:
+            pass
+
+        return False
+
+    async def _close_message_dock_or_dialogs(self, page):
+        """Safely closes any open messaging bubble, InMail paywall, or dialogs."""
+        try:
+            await page.evaluate("""
+                () => {
+                    const closeBtns = Array.from(document.querySelectorAll(
+                        "button[data-control-name='overlay.close_conversation_window'], " +
+                        "button[aria-label*='Close your conversation' i], " +
+                        "button.msg-overlay-bubble-header__control, " +
+                        "button.artdeco-modal__dismiss, " +
+                        "button[aria-label*='Dismiss' i], " +
+                        "button[aria-label*='Close' i]"
+                    ));
+                    for (const b of closeBtns) {
+                        try { b.click(); } catch (e) {}
+                    }
+                }
+            """)
+            await asyncio.sleep(0.5)
+        except Exception:
+            pass
+
+    async def send_linkedin_outreach(
+        self,
+        candidate_url: str,
+        message_body: str,
+        connection_note: Optional[str] = None,
+        candidate_name: Optional[str] = None,
+        browser_channel: Optional[str] = "chrome",
+        session_id: Optional[str] = None,
+        mode: str = "live",
+    ) -> Dict[str, Any]:
+        """Navigates to candidate's LinkedIn profile and sends formal hiring message or connection note.
+        
+        Strategy:
+        1. If mode is simulation/demo, gracefully simulates outreach delivery.
+        2. In live mode: Launches headed browser, checks auth, visits profile.
+        3. Checks if connection invitation is already pending.
+        4. Attempts Direct Message if unlocked (1st-degree connection or open InMail).
+        5. If locked/unavailable/paywalled, attempts Connect with personalized <= 300 char note.
+        6. Updates database with outreach status and delivery method.
+        """
+        clean_url = candidate_url.split("?")[0].rstrip("/")
+        display_name = candidate_name or "Candidate"
+
+        if mode in ("simulation", "demo", "offline_demo"):
+            logger.info("Executing simulated LinkedIn outreach to %s", clean_url)
+            await asyncio.sleep(1.0)
+            note_sent = (connection_note or message_body)[:295]
+            db_service.update_candidate_outreach(
+                canonical_url=candidate_url,
+                outreach_status="Sent",
+                outreach_message=note_sent,
+                outreach_method="Simulated Message",
+            )
+            return {
+                "status": "success",
+                "delivery_method": "Simulation (Outreach Sent)",
+                "recipient": display_name,
+                "candidate_url": clean_url,
+                "message": f"Simulated outreach successfully recorded for {display_name}.",
+            }
+
+        context, page = await self._get_or_create_context(browser_channel=browser_channel)
+        
+        if session_id:
+            sourcing_tracker.update_session(
+                session_id,
+                state="sending",
+                progress=20,
+                message=f"✉️ Outreach Agent: Navigating to {display_name}'s LinkedIn profile...",
+            )
+
+        try:
+            await self._update_overlay(page, f"✉️ AI Outreach Agent: Navigating to {display_name}...")
+            target_profile_url = clean_url + "/"
+            logger.info("Outreach Agent navigating to: %s", target_profile_url)
+            await page.goto(target_profile_url, wait_until="domcontentloaded", timeout=35000)
+            await asyncio.sleep(1.5)
+            await self._dismiss_common_overlays(page)
+
+            # Verify authenticated session
+            is_auth = await self.is_authenticated_session(page)
+            if not is_auth:
+                await self._inject_login_handover_banner(page, browser_channel or "Chrome")
+                if session_id:
+                    sourcing_tracker.update_session(
+                        session_id,
+                        state="auth_required",
+                        message="Please sign into LinkedIn in the browser window to allow the agent to send outreach.",
+                    )
+                return {
+                    "status": "auth_required",
+                    "delivery_method": "None",
+                    "recipient": display_name,
+                    "candidate_url": clean_url,
+                    "message": "LinkedIn session not authenticated. Please log in first.",
+                }
+
+            # Extract accurate candidate name from profile top card
+            try:
+                name_el = await page.query_selector("h1.text-heading-xlarge, div.pv-text-details__left-panel h1, h1")
+                if name_el:
+                    ext_name = (await name_el.inner_text()).strip()
+                    ext_name = re.sub(r"\b(1st\+?|2nd\+?|3rd\+?|view profile|connect|message|linkedin member)\b", "", ext_name, flags=re.I).strip()
+                    if ext_name and len(ext_name) > 1 and "linkedin" not in ext_name.lower():
+                        display_name = ext_name
+            except Exception as ne:
+                logger.debug("Could not extract profile name: %s", ne)
+
+            if session_id:
+                sourcing_tracker.update_session(
+                    session_id,
+                    state="sending",
+                    progress=40,
+                    message=f"✉️ Analyzing messaging channels for {display_name}...",
+                )
+
+            await self._update_overlay(page, f"✉️ AI Outreach Agent: Analyzing messaging channels for {display_name}...")
+            await asyncio.sleep(1.0)
+
+            # Check if an invitation is already pending
+            if await self._is_connection_pending(page):
+                msg = f"Connection invitation already pending for {display_name}"
+                logger.info("Outreach: %s on %s", msg, clean_url)
+                await self._update_overlay(page, f"ℹ️ Connection invitation already pending for {display_name}")
+                db_service.update_candidate_outreach(
+                    canonical_url=candidate_url,
+                    outreach_status="Sent",
+                    outreach_message=connection_note or message_body,
+                    outreach_method="Connection Pending",
+                )
+                if session_id:
+                    sourcing_tracker.update_session(
+                        session_id,
+                        state="completed",
+                        progress=100,
+                        message=f"ℹ️ Connection invitation already pending for {display_name}",
+                    )
+                return {
+                    "status": "success",
+                    "delivery_method": "Connection Pending",
+                    "recipient": display_name,
+                    "candidate_url": clean_url,
+                    "message": msg,
+                }
+
+            # -------------------------------------------------------------
+            # Channel Option A: Direct LinkedIn Message (if unlocked)
+            # -------------------------------------------------------------
+            message_btn = None
+            try:
+                message_btn = await page.query_selector(
+                    "div.pv-top-card-v2-ctas button:has-text('Message'), div.pvs-profile-actions button:has-text('Message'), button:has-text('Message'), a:has-text('Message')"
+                )
+            except Exception as mb_err:
+                logger.debug("Error querying message button: %s", mb_err)
+
+            is_locked = False
+            if message_btn:
+                try:
+                    is_locked = await page.evaluate(
+                        """(el) => {
+                            if (!el) return false;
+                            const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                            if (aria.includes('lock') || aria.includes('inmail') || aria.includes('premium')) return true;
+                            const text = (el.innerText || el.textContent || '').toLowerCase();
+                            if (text.includes('inmail') || text.includes('premium')) return true;
+                            const lock = el.querySelector('svg[data-test-icon*="lock"], svg[data-test-icon*="premium"], li-icon[type*="lock"]');
+                            return Boolean(lock);
+                        }""",
+                        message_btn,
+                    )
+                    if is_locked:
+                        logger.info("Direct Message button is locked (requires InMail credit). Will use Connection Note.")
+                except Exception as eval_err:
+                    logger.debug("Error checking lock icon: %s", eval_err)
+
+            direct_message_sent = False
+            if message_btn and not is_locked:
+                try:
+                    logger.info("Attempting Direct Message to %s", display_name)
+                    await self._update_overlay(page, f"✉️ Opening direct message composer for {display_name}...")
+                    await message_btn.click(force=True, timeout=5000)
+                    await asyncio.sleep(1.8)
+
+                    # Check if an InMail upsell/paywall modal popped up instead of composer
+                    inmail_modal_up = await page.evaluate("""
+                        () => {
+                            const modal = document.querySelector('div.artdeco-modal, div[role="dialog"]');
+                            if (!modal) return false;
+                            const t = (modal.innerText || modal.textContent || '').toLowerCase();
+                            return (
+                                t.includes('inmail') ||
+                                t.includes('premium') ||
+                                t.includes('credit') ||
+                                t.includes('upgrade') ||
+                                t.includes('outside your network')
+                            );
+                        }
+                    """)
+                    if inmail_modal_up:
+                        logger.info("Direct Message opened an InMail/Premium paywall modal for %s. Closing and using Connect.", display_name)
+                        await self._close_message_dock_or_dialogs(page)
+                        await page.keyboard.press("Escape")
+                        await asyncio.sleep(0.5)
+                    else:
+                        # Wait for message composer textbox
+                        composer = None
+                        try:
+                            composer = await page.wait_for_selector(
+                                "div.msg-form__contenteditable[contenteditable='true'], div[role='textbox'][aria-label*='Write a message' i], div.msg-form__contenteditable p, div.msg-overlay-conversation-bubble textarea",
+                                timeout=5000,
+                            )
+                        except Exception:
+                            composer = None
+
+                        if composer:
+                            # Check if opened composer requires InMail credits
+                            is_inmail_composer = await page.evaluate("""
+                                () => {
+                                    const dock = document.querySelector('div.msg-overlay-conversation-bubble, div.msg-form');
+                                    if (!dock) return false;
+                                    const t = (dock.innerText || dock.textContent || '').toLowerCase();
+                                    return t.includes('inmail credits') || t.includes('0 credits') || t.includes('purchase inmail');
+                                }
+                            """)
+                            if is_inmail_composer:
+                                logger.info("Composer requires InMail credits for %s. Closing dock and using Connect.", display_name)
+                                await self._close_message_dock_or_dialogs(page)
+                            else:
+                                await composer.click(force=True)
+                                await asyncio.sleep(0.5)
+                                await self._update_overlay(page, f"⌨️ AI Outreach Agent: Typing formal message for {display_name}...")
+
+                                # Human typing cadence
+                                await page.keyboard.type(message_body, delay=15)
+                                await asyncio.sleep(1.2)
+
+                                send_btn = await page.query_selector(
+                                    "button.msg-form__send-button, form.msg-form button[type='submit'], button:has-text('Send')"
+                                )
+                                if send_btn and not await send_btn.is_disabled():
+                                    await self._update_overlay(page, f"🚀 AI Outreach Agent: Sending message to {display_name}...")
+                                    await send_btn.click(force=True)
+                                    await asyncio.sleep(2.0)
+                                    direct_message_sent = True
+                                    await self._close_message_dock_or_dialogs(page)
+                except Exception as d_err:
+                    logger.warning("Direct message execution encountered: %s. Proceeding to Connect channel.", d_err)
+                    await self._close_message_dock_or_dialogs(page)
+
+            if direct_message_sent:
+                db_service.update_candidate_outreach(
+                    canonical_url=candidate_url,
+                    outreach_status="Sent",
+                    outreach_message=message_body,
+                    outreach_method="Direct Message",
+                )
+                await self._update_overlay(page, f"✅ AI Outreach Agent: Formal message sent to {display_name}!")
+                if session_id:
+                    sourcing_tracker.update_session(
+                        session_id,
+                        state="completed",
+                        progress=100,
+                        message=f"✅ Message successfully sent to {display_name} via Direct Message!",
+                    )
+                return {
+                    "status": "success",
+                    "delivery_method": "Direct Message",
+                    "recipient": display_name,
+                    "candidate_url": clean_url,
+                    "message": f"Successfully sent formal hiring outreach to {display_name} via Direct Message.",
+                }
+
+            # -------------------------------------------------------------
+            # Channel Option B: Connect Request with Custom Note (<= 195 chars)
+            # -------------------------------------------------------------
+            # Re-check pending status right before attempting Connect
+            if await self._is_connection_pending(page):
+                msg = f"Connection invitation already pending for {display_name}"
+                logger.info("Outreach: %s on %s", msg, clean_url)
+                await self._update_overlay(page, f"ℹ️ Connection invitation already pending for {display_name}")
+                db_service.update_candidate_outreach(
+                    canonical_url=candidate_url,
+                    outreach_status="Sent",
+                    outreach_message=connection_note or message_body,
+                    outreach_method="Connection Pending",
+                )
+                if session_id:
+                    sourcing_tracker.update_session(
+                        session_id,
+                        state="completed",
+                        progress=100,
+                        message=f"ℹ️ Connection invitation already pending for {display_name}",
+                    )
+                return {
+                    "status": "success",
+                    "delivery_method": "Connection Pending",
+                    "recipient": display_name,
+                    "candidate_url": clean_url,
+                    "message": msg,
+                }
+
+            logger.info("Locating Connect action for %s", display_name)
+            await self._update_overlay(page, f"🤝 AI Outreach Agent: Locating Connect action for {display_name}...")
+            
+            # 1. Try finding primary Connect button or anchor in profile card using standard DOM inspection
+            connect_status = await page.evaluate("""
+                () => {
+                    const candidates = Array.from(
+                        document.querySelectorAll(
+                            "div.pv-top-card-v2-ctas button, div.pv-top-card-v2-ctas a, " +
+                            "div.pvs-profile-actions button, div.pvs-profile-actions a, " +
+                            "main button, main a, button, a, [role='button']"
+                        )
+                    );
+
+                    // Check if a pending button is present
+                    const hasPending = candidates.some(el => {
+                        const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+                        const aria = (el.getAttribute('aria-label') || '').trim().toLowerCase();
+                        return text === 'pending' || text.includes('pending') || aria.includes('pending');
+                    });
+                    if (hasPending) {
+                        return "pending";
+                    }
+
+                    const connectEl = candidates.find(el => {
+                        if (!el) return false;
+                        const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+                        const aria = (el.getAttribute('aria-label') || '').trim().toLowerCase();
+                        const compKey = (el.getAttribute('componentkey') || '').toLowerCase();
+
+                        if (compKey.includes('connectbutton')) return true;
+                        if (aria === 'connect' || text === 'connect') return true;
+                        if (aria.includes('invite') && aria.includes('connect')) return true;
+                        if (aria.startsWith('connect with') || aria.startsWith('connect to')) return true;
+                        if (/\bconnect\b/i.test(text) && !text.includes('connection pending') && !text.includes('connections') && !text.includes('connected')) return true;
+                        return false;
+                    });
+
+                    if (connectEl) {
+                        connectEl.click();
+                        return "clicked";
+                    }
+                    return "not_found";
+                }
+            """)
+
+            if connect_status == "pending":
+                msg = f"Connection invitation already pending for {display_name}"
+                logger.info("Outreach: %s on %s", msg, clean_url)
+                await self._update_overlay(page, f"ℹ️ Connection invitation already pending for {display_name}")
+                db_service.update_candidate_outreach(
+                    canonical_url=candidate_url,
+                    outreach_status="Sent",
+                    outreach_message=connection_note or message_body,
+                    outreach_method="Connection Pending",
+                )
+                if session_id:
+                    sourcing_tracker.update_session(
+                        session_id,
+                        state="completed",
+                        progress=100,
+                        message=f"ℹ️ Connection invitation already pending for {display_name}",
+                    )
+                return {
+                    "status": "success",
+                    "delivery_method": "Connection Pending",
+                    "recipient": display_name,
+                    "candidate_url": clean_url,
+                    "message": msg,
+                }
+
+            connect_clicked = (connect_status == "clicked")
+            
+            # If not in top primary actions, check 'More actions' dropdown
+            if not connect_clicked:
+                more_btn = await page.query_selector(
+                    "div.pv-top-card-v2-ctas button[aria-label*='More' i], div.pvs-profile-actions button[aria-label*='More' i], button[aria-label*='More actions' i], button:has-text('More')"
+                )
+                if more_btn:
+                    await more_btn.click(force=True, timeout=5000)
+                    await asyncio.sleep(0.8)
+                    dropdown_status = await page.evaluate("""
+                        () => {
+                            const dropdown = document.querySelector("div.artdeco-dropdown__content--is-open, div.artdeco-dropdown__content");
+                            const scope = dropdown || document;
+                            const items = Array.from(scope.querySelectorAll("[role='button'], button, a, span, div.artdeco-dropdown__item"));
+                            
+                            const isPending = items.some(el => {
+                                const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+                                const aria = (el.getAttribute('aria-label') || '').trim().toLowerCase();
+                                return text === 'pending' || text.includes('pending') || aria.includes('pending');
+                            });
+                            if (isPending) {
+                                return "pending";
+                            }
+
+                            const dropEl = items.find(el => {
+                                const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+                                const aria = (el.getAttribute('aria-label') || '').trim().toLowerCase();
+                                if (aria === 'connect' || text === 'connect') return true;
+                                if (aria.includes('invite') && aria.includes('connect')) return true;
+                                if (aria.startsWith('connect with') || aria.startsWith('connect to')) return true;
+                                if (/\bconnect\b/i.test(text) && !text.includes('connection pending') && !text.includes('connections') && !text.includes('connected')) return true;
+                                return false;
+                            });
+                            if (dropEl) {
+                                dropEl.click();
+                                return "clicked";
+                            }
+                            return "not_found";
+                        }
+                    """)
+                    if dropdown_status == "pending":
+                        msg = f"Connection invitation already pending for {display_name}"
+                        logger.info("Outreach: %s on %s", msg, clean_url)
+                        await self._update_overlay(page, f"ℹ️ Connection invitation already pending for {display_name}")
+                        db_service.update_candidate_outreach(
+                            canonical_url=candidate_url,
+                            outreach_status="Sent",
+                            outreach_message=connection_note or message_body,
+                            outreach_method="Connection Pending",
+                        )
+                        if session_id:
+                            sourcing_tracker.update_session(
+                                session_id,
+                                state="completed",
+                                progress=100,
+                                message=f"ℹ️ Connection invitation already pending for {display_name}",
+                            )
+                        return {
+                            "status": "success",
+                            "delivery_method": "Connection Pending",
+                            "recipient": display_name,
+                            "candidate_url": clean_url,
+                            "message": msg,
+                        }
+                    connect_clicked = (dropdown_status == "clicked")
+
+            if connect_clicked:
+                await self._update_overlay(page, f"🤝 AI Outreach Agent: Opening connection modal for {display_name}...")
+                await asyncio.sleep(1.5)
+
+                # Dismiss 'How do you know this person?' modal if it appears
+                try:
+                    other_opt_clicked = await page.evaluate("""
+                        () => {
+                            const btns = Array.from(document.querySelectorAll('button, input, [role="button"], label'));
+                            const el = btns.find(b => {
+                                const text = (b.innerText || b.textContent || '').trim().toLowerCase();
+                                const val = (b.value || b.getAttribute('value') || '').toLowerCase();
+                                return text === 'other' || val === 'other';
+                            });
+                            if (el) {
+                                el.click();
+                                return true;
+                            }
+                            return false;
+                        }
+                    """)
+                    if other_opt_clicked:
+                        await asyncio.sleep(0.5)
+                        await page.evaluate("""
+                            () => {
+                                const btns = Array.from(document.querySelectorAll('button, [role="button"]'));
+                                const nextBtn = btns.find(b => {
+                                    const text = (b.innerText || b.textContent || '').trim().toLowerCase();
+                                    return text === 'connect' || text === 'next';
+                                });
+                                if (nextBtn) {
+                                    nextBtn.click();
+                                    return true;
+                                }
+                                return false;
+                            }
+                        """)
+                        await asyncio.sleep(0.8)
+                except Exception as know_err:
+                    logger.debug("Prompt 'How do you know' check: %s", know_err)
+
+                # Safe limit of <= 195 chars to respect LinkedIn's 200/300 char connection note limits
+                note_text = (connection_note or message_body)[:195]
+                has_added_note = False
+
+                # Click 'Add a note' button in invitation modal using valid DOM inspection
+                add_note_clicked = await page.evaluate("""
+                    () => {
+                        const btns = Array.from(document.querySelectorAll('button, a, [role="button"]'));
+                        const b = btns.find(x => {
+                            const text = (x.innerText || x.textContent || '').trim().toLowerCase();
+                            const aria = (x.getAttribute('aria-label') || '').toLowerCase();
+                            return text === 'add a note' || aria.includes('add a note');
+                        });
+                        if (b) {
+                            b.click();
+                            return true;
+                        }
+                        return false;
+                    }
+                """)
+                if add_note_clicked:
+                    await asyncio.sleep(1.5)
+                    await self._update_overlay(page, f"⌨️ AI Outreach Agent: Adding personalized note ({len(note_text)} chars)...")
+                    
+                    # Try focusing contenteditable div (modern LinkedIn) or textarea (classic LinkedIn)
+                    focused = await page.evaluate("""
+                        () => {
+                            const all = Array.from(document.querySelectorAll('*'));
+                            const editor = all.find(e => e.getAttribute('contenteditable') === 'true' || e.isContentEditable);
+                            if (editor) {
+                                editor.focus();
+                                return true;
+                            }
+                            const ta = document.querySelector('textarea#custom-message, textarea[name="message"], div[role="dialog"] textarea');
+                            if (ta) {
+                                ta.focus();
+                                return true;
+                            }
+                            return false;
+                        }
+                    """)
+                    if focused:
+                        await page.keyboard.type(note_text, delay=15)
+                        await asyncio.sleep(0.8)
+                        has_added_note = True
+
+                # Click Send invitation button in the dialog using valid DOM inspection
+                send_invite_clicked = await page.evaluate("""
+                    () => {
+                        const dialog = document.querySelector('dialog, div[role="dialog"]');
+                        const scope = dialog || document;
+                        const btns = Array.from(scope.querySelectorAll('button, a, [role="button"]'));
+                        const sendBtn = btns.find(b => {
+                            if (b.disabled || b.getAttribute('aria-disabled') === 'true') return false;
+                            const text = (b.innerText || b.textContent || '').trim().toLowerCase();
+                            const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                            return (
+                                text === 'send' ||
+                                text === 'send now' ||
+                                text === 'send invitation' ||
+                                aria.includes('send invitation') ||
+                                aria.includes('send now')
+                            );
+                        });
+                        if (sendBtn) {
+                            sendBtn.click();
+                            return true;
+                        }
+                        return false;
+                    }
+                """)
+                if send_invite_clicked:
+                    await self._update_overlay(page, f"🚀 AI Outreach Agent: Sending connection invitation to {display_name}...")
+                    await asyncio.sleep(2.5)
+
+                    delivery = "Connection Note" if has_added_note else "Connection Request"
+                    db_service.update_candidate_outreach(
+                        canonical_url=candidate_url,
+                        outreach_status="Sent",
+                        outreach_message=note_text,
+                        outreach_method=delivery,
+                    )
+                    await self._update_overlay(page, f"✅ AI Outreach Agent: Connection invitation sent to {display_name}!")
+                    if session_id:
+                        sourcing_tracker.update_session(
+                            session_id,
+                            state="completed",
+                            progress=100,
+                            message=f"✅ Connection invitation with formal note sent to {display_name}!",
+                        )
+                    return {
+                        "status": "success",
+                        "delivery_method": delivery,
+                        "recipient": display_name,
+                        "candidate_url": clean_url,
+                        "message": f"Successfully sent connection invitation with formal note to {display_name}.",
+                    }
+
+            # Neither accessible
+            warn_msg = f"Could not find an accessible Message or Connect button for {display_name}. Profile may require InMail credits or have restricted incoming messages."
+            await self._update_overlay(page, f"⚠️ AI Outreach Agent: {warn_msg}")
+            if session_id:
+                sourcing_tracker.update_session(
+                    session_id,
+                    state="warning",
+                    progress=100,
+                    message=warn_msg,
+                )
+            return {
+                "status": "warning",
+                "delivery_method": "None",
+                "recipient": display_name,
+                "candidate_url": clean_url,
+                "message": warn_msg,
+            }
+
+        except Exception as e:
+            logger.error("Outreach agent error on %s: %s", clean_url, e)
+            if session_id:
+                sourcing_tracker.update_session(
+                    session_id,
+                    state="failed",
+                    error=str(e),
+                    message=f"Outreach error on {display_name}: {str(e)[:120]}",
+                )
+            return {
+                "status": "error",
+                "delivery_method": "None",
+                "recipient": display_name,
+                "candidate_url": clean_url,
+                "message": f"Outreach failed: {str(e)}",
+            }
+
     async def close_browser(self):
         """Closes the active Playwright browser context cleanly."""
         if self._context:
@@ -4014,6 +4736,28 @@ class LinkedInBrowserService:
         return await self._runner.run(
             self._engine.extract_candidate_profile(
                 candidate, browser_channel=browser_channel, skip_navigation=skip_navigation
+            )
+        )
+
+    async def send_linkedin_outreach(
+        self,
+        candidate_url: str,
+        message_body: str,
+        connection_note: Optional[str] = None,
+        candidate_name: Optional[str] = None,
+        browser_channel: Optional[str] = "chrome",
+        session_id: Optional[str] = None,
+        mode: str = "live",
+    ) -> Dict[str, Any]:
+        return await self._runner.run(
+            self._engine.send_linkedin_outreach(
+                candidate_url=candidate_url,
+                message_body=message_body,
+                connection_note=connection_note,
+                candidate_name=candidate_name,
+                browser_channel=browser_channel,
+                session_id=session_id,
+                mode=mode,
             )
         )
 

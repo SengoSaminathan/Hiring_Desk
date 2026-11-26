@@ -17,6 +17,135 @@ This log records observed progress and verification evidence. It is not a plan. 
 
 ## Activity Log
 
+### 2026-11-19 — Post-Auth Smooth Transition Fix: Talent Radar Animation & Route Protection
+- **Status:** Complete
+- **Changes observed:**
+  - [frontend/src/app/page.js](file:///d:/Hiring_desk/frontend/src/app/page.js):
+    - Fixed premature fallback to `AuthLandingPage` caused by checking `if (!isSignedIn)` while `!isLoaded` or during SSR mount.
+    - Implemented `showAuthTransition` state that automatically triggers the Talent Radar Scanner upon sign-up or sign-in with personalized welcome greeting (`Welcome, [Recruiter Name]! Initializing Recruiter Workspace...`).
+    - Added `isPreviouslyAuthenticated` check against `localStorage` to eliminate cold-start landing page flicker on subsequent page reloads.
+    - Automatically cleans auth URL hashes (`#/sign-up`, `#/sign-in`) using `window.history.replaceState` upon successful authentication, preventing routing loops back to the landing page.
+    - Enforced that `AuthLandingPage` only ever renders when `isLoaded === true` AND `isSignedIn === false`.
+  - [frontend/src/app/components/GlobalHiringLoader.js](file:///d:/Hiring_desk/frontend/src/app/components/GlobalHiringLoader.js):
+    - Added support for `customTitle`, `customSubtitle`, `customBadge`, and `forceActive` props so authentication transitions can show real-time stage progress without premature dismissal.
+  - [frontend/src/app/components/AuthLandingPage.js](file:///d:/Hiring_desk/frontend/src/app/components/AuthLandingPage.js):
+    - Added guard `if (isLoaded && isSignedIn) return null;` so the landing page never renders when the user is authenticated.
+    - Configured explicit redirection props on `<SignIn />`: `fallbackRedirectUrl="/"`, `forceRedirectUrl="/"`, `signUpFallbackRedirectUrl="/"`, and `signUpForceRedirectUrl="/"`.
+  - [frontend/src/app/components/ClerkAuthProvider.js](file:///d:/Hiring_desk/frontend/src/app/components/ClerkAuthProvider.js):
+    - Added local storage authentication key cleanup on `signOut` in both Clerk and dev providers.
+  - [frontend/src/app/layout.js](file:///d:/Hiring_desk/frontend/src/app/layout.js):
+    - Removed uncoordinated static loader to prevent duplicate overlapping transitions with the auth-aware `page.js` loader.
+- **Verification:**
+  - `pytest backend/tests/test_auth_and_company_db.py backend/tests/test_outreach.py`: 17 passed in 63.24s.
+  - Verified non-empty integrity of all 5 updated frontend files.
+- **Next allowed step:** Recruiter sign-up/sign-in verification on `http://localhost:3000`.
+
+### 2026-11-19 — User & Company Database Persistence (SQLite, Supabase Sync, and Clerk Auth Integration)
+- **Status:** Complete
+- **Changes observed:**
+  - [backend/app/services/db_service.py](file:///d:/Hiring_desk/backend/app/services/db_service.py):
+    - Created `companies` and `users` SQLite tables inside `_init_db`:
+      - `companies`: `id`, `name`, `industry`, `website`, `location`, `employee_count`, `value_proposition`, `recruiter_name`, `recruiter_signature`, `created_by_user_id`, timestamps.
+      - `users`: `id` (Clerk User ID), `email`, `full_name`, `first_name`, `last_name`, `role`, `company_id` (foreign key to `companies.id`), `avatar_url`, timestamps.
+      - Added high-performance indexes `idx_companies_user`, `idx_users_email`, `idx_users_company`.
+    - Implemented database CRUD methods:
+      - `upsert_user(user_data)`: Upserts user record, associates existing company, and syncs to Supabase cloud if configured.
+      - `get_user(user_id)`: Fetches user record with joined company metadata.
+      - `upsert_company(company_data, user_id)`: Upserts company profile, updates `users.company_id` link, and syncs to Supabase.
+      - `get_company_profile(user_id, company_id)`: Retrieves active organization profile for current user or platform default.
+  - [backend/app/services/supabase_service.py](file:///d:/Hiring_desk/backend/app/services/supabase_service.py):
+    - Added `upsert_user`, `get_user`, `upsert_company`, and `get_company` for cloud persistence in Supabase PostgreSQL.
+  - [backend/supabase_schema.sql](file:///d:/Hiring_desk/backend/supabase_schema.sql):
+    - Appended Table 4 (`companies`) and Table 5 (`users`) with updated_at triggers, foreign keys, indexes, and RLS policies.
+  - [backend/app/api/auth.py](file:///d:/Hiring_desk/backend/app/api/auth.py):
+    - Created FastAPI router with endpoints:
+      - `POST /api/auth/sync-user`: Synchronizes Clerk user metadata to backend database.
+      - `GET /api/auth/user/{user_id}`: Retrieves recruiter user profile.
+      - `POST /api/company/profile`: Saves/updates organization profile and recruiter outreach persona.
+      - `GET /api/company/profile`: Fetches company metadata by `user_id` or `company_id`.
+  - [backend/app/main.py](file:///d:/Hiring_desk/backend/app/main.py):
+    - Registered `auth_router` in FastAPI application.
+  - [frontend/src/app/services/companyService.js](file:///d:/Hiring_desk/frontend/src/app/services/companyService.js):
+    - Enhanced `saveCompanyProfile` to persist in `localStorage` immediately (optimistic UI) and asynchronously call `POST /api/company/profile`.
+    - Added `syncUserToServer` to send Clerk user details to `POST /api/auth/sync-user`.
+    - Added `fetchCompanyProfileFromServer` to retrieve and seed company data from backend SQLite/Supabase.
+  - [frontend/src/app/components/ClerkAuthProvider.js](file:///d:/Hiring_desk/frontend/src/app/components/ClerkAuthProvider.js):
+    - Synced Clerk user info upon authentication to `POST /api/auth/sync-user` and seeded existing company profile.
+    - Linked `activeUserId` to onboarding modal.
+  - [frontend/src/app/components/CompanyProfileModal.js](file:///d:/Hiring_desk/frontend/src/app/components/CompanyProfileModal.js):
+    - Propagated `userId` to `saveCompanyProfile` so the company is linked to the authenticated user.
+  - [backend/tests/test_auth_and_company_db.py](file:///d:/Hiring_desk/backend/tests/test_auth_and_company_db.py):
+    - Added 5 unit tests covering table creation, user upsert/retrieve, company upsert/user linking, and API endpoints.
+- **Verification:**
+  - `pytest backend/tests/test_auth_and_company_db.py`: 5 passed in 10.49s.
+  - `pytest backend/tests/test_outreach.py`: 12 passed in 7.42s.
+  - SQLite inspection: Verified tables `['candidates', 'evaluations', 'jobs', 'companies', 'users']` exist in `data/hiring_desk.db`.
+- **Next allowed step:** Recruiter sign-up and onboarding verification on `http://localhost:3000`.
+
+### 2026-11-19 — Sourcing Lifecycle Process Animation & Profile Mockup Removal
+- **Status:** Complete
+- **Changes observed:**
+  - [frontend/src/app/components/AuthLandingPage.js](file:///d:/Hiring_desk/frontend/src/app/components/AuthLandingPage.js):
+    - Removed all candidate profile elements as requested by the user.
+    - Built an interactive, auto-advancing **4-Stage Candidate Sourcing Lifecycle Animation Widget**:
+      1. `1. Ingest & Parse JD`: Role architecture, mandatory skill decomposition, and commute radius formulation.
+      2. `2. Desktop Traversal`: Headed Chrome Playwright traversal, safe anti-bot cadence, and multi-section profile harvesting.
+      3. `3. Grounded Scoring`: Zero-hallucination multi-factor evaluation with verifiable public evidence citations.
+      4. `4. Calibrated Outreach`: Tailored connection notes strictly under 195 characters with company value proposition and recruiter persona.
+    - Equipped with auto-advancing progress bar (3.8s cadence), hover-to-pause interaction, interactive stage selection tabs, and platform performance pillars (`3x Faster Discovery`, `100% Grounded Proof`, `Local-First Privacy`).
+    - Provided generous breathing room and whitespace while maintaining clean viewport bounds with zero vertical scrollbars.
+- **Verification:**
+  - Node syntax check on `frontend/src/app/components/AuthLandingPage.js` passed with exit code 0.
+  - Pytest regression suite: 12 passed in 7.06s.
+- **Next allowed step:** Recruiter review on `http://localhost:3000`.
+
+### 2026-11-19 — Removal of Redundant Auth Tab Strip, Clerk Branding Element & Viewport Height Optimization
+- **Status:** Complete
+- **Changes observed:**
+  - [frontend/src/app/components/AuthLandingPage.js](file:///d:/Hiring_desk/frontend/src/app/components/AuthLandingPage.js):
+    - Removed redundant `[ Sign In | Create Account (Sign Up) ]` tab switcher option from the top of the auth column; Clerk's `<SignIn />` natively contains its own seamless *"Don't have an account? Sign up"* action link.
+    - Set `appearance.elements.footerItem: "hidden"` on the Clerk `<SignIn />` container.
+    - Optimized layout to fit entirely within viewport (`h-screen max-h-screen overflow-hidden`): reduced header height to `h-14`, condensed hero margins and card padding, and trimmed footer to `py-2.5`, completely eliminating the right-hand vertical page scrollbar on desktop screens.
+  - [frontend/src/app/globals.css](file:///d:/Hiring_desk/frontend/src/app/globals.css):
+    - Targeted `.cl-footerItem`, `.cl-internal-r93pb5`, `[data-clerk-dev-mode-notice]`, and `[data-clerk-dev-mode-overlay]` with `display: none !important;` to completely remove the "Secured by Clerk" and "Development mode" badge elements while explicitly preserving `.cl-footerAction` (*"Don't have an account? Sign up"*).
+- **Verification:**
+  - Node syntax check on `frontend/src/app/components/AuthLandingPage.js` passed.
+  - Pytest regression suite: 12 passed in 6.94s.
+- **Next allowed step:** Recruiter interaction and sign-in testing on `http://localhost:3000`.
+
+### 2026-11-18 — Swarm: Clerk Auth, Company Details Onboarding, TanStack Query, & Browser Outreach Fix
+- **Status:** Complete
+- **Changes observed:**
+  - [backend/app/services/browser_service.py](file:///d:/Hiring_desk/backend/app/services/browser_service.py): Fixed outreach agent stall where native `page.evaluate` crashed with `DOMException: ':has-text' is not a valid selector`. Replaced with standard DOM inspection using `Array.from(document.querySelectorAll(...)).find(...)` with case-insensitive `innerText` and `aria-label` matching. Added proactive `_is_connection_pending` detection so that when a profile already shows 'Pending' (as on `https://www.linkedin.com/in/sengottayan-s-17b5ab329/`), the agent immediately marks the record as 'Sent' / 'Connection Pending' with clear HUD feedback rather than failing or timing out. Enhanced InMail paywall modal dismissal and fallback to Connect channel.
+  - [backend/tests/test_outreach.py](file:///d:/Hiring_desk/backend/tests/test_outreach.py): Added 6 regression tests covering selector safety, pending invitation detection, dropdown pending check, locked InMail fallback, and InMail modal auto-dismissal.
+  - [frontend/src/app/components/ClerkAuthProvider.js](file:///d:/Hiring_desk/frontend/src/app/components/ClerkAuthProvider.js) & [frontend/src/app/components/UserNav.js](file:///d:/Hiring_desk/frontend/src/app/components/UserNav.js): Integrated Clerk Next.js Authentication (`@clerk/nextjs`) with automatic fallback to seamless local development authentication mode when API keys are not yet added to `.env`.
+  - [frontend/src/app/components/CompanyProfileModal.js](file:///d:/Hiring_desk/frontend/src/app/components/CompanyProfileModal.js) & [frontend/src/app/services/companyService.js](file:///d:/Hiring_desk/frontend/src/app/services/companyService.js): Created HR Company Details Onboarding flow that prompts on sign-up / first visit to collect Company Name, Industry, Recruiter Name/Title, Value Proposition / Mission Context, and Office HQ. Dispatches reactive cross-component synchronization so outreach drafts, job requirements, and sourcing wizard immediately inherit the real company info.
+  - [frontend/src/app/providers.js](file:///d:/Hiring_desk/frontend/src/app/providers.js) & [frontend/src/app/hooks/useCandidatesQuery.js](file:///d:/Hiring_desk/frontend/src/app/hooks/useCandidatesQuery.js): Setup TanStack Query (`@tanstack/react-query`) with `QueryClientProvider` (`staleTime: 60s`, `refetchOnWindowFocus: false`). Implemented query caching and instant cache-and-revalidate behavior to eliminate the jarring 'Candidates 0' flash on reload.
+  - [frontend/src/app/components/HiringRadarLoader.js](file:///d:/Hiring_desk/frontend/src/app/components/HiringRadarLoader.js): Created an AI Talent Radar / Candidate Discovery Scanner loading animation with sweeping beam, pulsing talent nodes, dynamic hiring stage transitions, and table view toggling.
+- **Verification:**
+  - `pytest backend/tests/test_outreach.py backend/tests/test_query_sourcing_fix.py -v`: All 29 passed in 5.89s.
+  - Frontend syntax and export verification: Node syntax execution on `layout.js` and `page.js` returned 0 errors.
+- **Skipped/not run:** Automated CAPTCHA solving.
+- **Risks/blockers:** User can add `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` to `.env` for production Clerk authentication; otherwise runs in frictionless local dev auth mode.
+- **Next allowed step:** Recruiter review on `http://localhost:3000`.
+
+### 2026-11-18 — Candidate Outreach Automation & Test Profile Delivery
+- **Status:** Complete
+- **Changes observed:**
+  - [backend/app/api/outreach.py](file:///d:/Hiring_desk/backend/app/api/outreach.py): Created REST endpoints for candidate outreach: `/api/outreach/generate` (AI/deterministic message and connection note generation), `/api/outreach/send` (background batch browser dispatch), `/api/outreach/session/{session_id}` (live progress tracking), and `/api/outreach/candidates/{candidate_id}` (manual status patching).
+  - [backend/app/services/ai_service.py](file:///d:/Hiring_desk/backend/app/services/ai_service.py): Implemented `generate_outreach_message` and `_deterministic_connection_note` enforcing strict $\le 195$ character ceiling to guarantee compatibility with LinkedIn's free-tier 200-character invitation note limit.
+  - [backend/app/services/browser_service.py](file:///d:/Hiring_desk/backend/app/services/browser_service.py): Added `send_linkedin_outreach` with modern LinkedIn DOM selector support (`a[componentkey*='ConnectButton']`), JavaScript direct click evaluation avoiding top navigation bar occlusion, support for modern `<dialog>` modal and `contenteditable="true"` input fields, human-like typing cadence (15ms delay), and `pointer-events: none;` on HUD to avoid actionability timeouts.
+  - [backend/app/services/db_service.py](file:///d:/Hiring_desk/backend/app/services/db_service.py): Added `update_candidate_outreach` and updated `get_candidate_by_id_or_url` and `get_all_candidates` to preserve and return outreach tracking attributes (`outreach_status`, `outreach_message`, `outreach_sent_at`, `outreach_method`), eliminating destructive reconciliation deletions.
+  - [frontend/src/app/page.js](file:///d:/Hiring_desk/frontend/src/app/page.js): Added full-featured interactive Automated Outreach Composer modal with AI draft generation, customizable role/company/recruiter parameters, tone selection, live character count validation, browser agent execution progress bar, and candidate table badges reflecting outreach status (`Mail Sent ✓`).
+- **Verification:**
+  - `pytest backend/tests/test_outreach.py backend/tests/test_query_sourcing_fix.py -v`: 23 passed in 6.48s.
+  - Live dispatch test on `https://www.linkedin.com/in/sengottayan-s-17b5ab329/`: Successfully clicked Connect, added personalized note (169 chars), dispatched invitation, and verified with screenshots (`scratch/success_typed.png` showing `169/200` chars typed and `scratch/success_sent.png` confirming LinkedIn toast `"Invitation sent to Sengottayan."` and button state changing to `🕒 Pending`).
+  - Database verification: Candidate record for Sengottayan S verified with `outreach_status = 'Sent'`, `outreach_method = 'Connection Note'`, and target role `Senior AI Lead` (94% fit).
+- **Skipped/not run:** CAPTCHA automated solve (adhered to human handover protocol).
+- **Risks/blockers:** User must maintain active LinkedIn login cookies in `data/browser_profile`.
+- **Next allowed step:** Frontend recruiter review and multi-candidate batch outreach testing.
+
+
 ### 2026-10-27 — Prototype — Gemini 429 Quota Fix & UI Table Polish
 - **Status:** Complete
 - **Changes observed:**
@@ -367,9 +496,271 @@ This log records observed progress and verification evidence. It is not a plan. 
      - Uploading a JD previously generated up to 37 skill chips because raw responsibilities, soft skills, and entire sentences were extracted into chips.
      - *Fix:* Enforced `_clean_skill_tokens` in `ai_service.py` with `max_tokens=10` for mandatory skills and `max_tokens=8` for preferred skills. Strips behavioral fluff (e.g. "relentless customer champion", "superb written & verbal communication"), removes parenthetical explanations, splits compound phrases, and bounds word lengths, producing concise, high-signal chips (verified on `Senior_Product_Manager_AI_SaaS_Job_Description.docx` reducing 37 chips to exactly 10 mandatory and 6 preferred).
 - **Verification:**
-  - `pytest backend/tests/test_query_sourcing_fix.py -v`: 14 passed in 7.30s (100% pass rate).
-  - `pytest backend/tests/test_candidate_evaluation_improvements.py backend/tests/test_candidate_extraction.py -v`: 18 passed in 20.76s (100% pass rate).
-  - Total test suite: 32 tests passing.
+  - `pytest backend/tests/test_query_sourcing_fix.py -v`: 17 passed in 12.90s (100% pass rate).
+  - `pytest backend/tests/test_candidate_evaluation_improvements.py backend/tests/test_candidate_extraction.py -v`: 18 passed in 18.50s (100% pass rate).
+  - Total test suite: 35 tests passing.
+
+## 2026-11-18 — Executive/CEO Filtration & Preferred Work Location Disambiguation
+- **Status:** Complete
+- **Issues Addressed & Solutions:**
+  1. *CEO / Founder / Business Owner Profiles in Technical Shortlists:*
+     - Profiles with titles like `Founder/CEO/Head of AI at Nunnari Labs` were being matched for employee vacancies (`Senior AI Lead`) because search keywords contained `Head of AI`, and the evaluation engine did not recognize active business owners as non-candidates.
+     - *Fix:*
+       - Implemented `is_executive_or_founder(headline, role_title)` in both `browser_service.py` and `ai_service.py`. When sourcing for non-CEO/non-founder roles, profiles whose headlines indicate an active Founder, Co-Founder, CEO, Managing Director, or Business Owner are filtered out during card harvesting and deep profile extraction.
+       - In `ai_service.py` (`_deterministic_evaluator`, `evaluate_candidates_batch`, `evaluate_candidate`), active founders/CEOs are scored <= 25% on Experience with status `Not Matched` and flagged as `Executive / Founder Mismatch`.
+  2. *Preferred Work Location vs Requisition Target Location Disambiguation:*
+     - In the Candidate Profile modal, the card displayed `Preferred Work Location: Chennai, Tamilnadu, India`, which misled the user into thinking the candidate had specified Chennai, when it was actually the company's job requisition location.
+     - *Fix:*
+       - In `frontend/src/app/page.js`, relabeled and restructured Section 1 to clearly show:
+         - `Candidate Current Residence: [e.g. Tamil Nadu]`
+         - `Requisition Target Location: [e.g. Chennai, Tamil Nadu, India]`
+         - `Candidate Preferred Work Locations: [e.g. from Open to Work / profile, if published]`
+       - In `score_card_geographic_relevance`, candidates living in the exact target city (e.g. Chennai, Coimbatore) are awarded 100 points, candidates in the same state (Tamil Nadu) receive 75 points, and general country matches receive 50 points, ensuring exact city matches are prioritized first during harvesting.
+       - In `analyze_location_compatibility`, added explicit distinction between exact city matches and regional/state matches.
 
 
 
+
+
+
+## 2026-11-18 — Automated Multi-Candidate LinkedIn Outreach & Personalized Message Dispatch
+- **Status:** Complete
+- **Issues Addressed & Solutions:**
+  1. *Recruiter-to-Candidate Formal Outreach Automation:*
+     - Recruiters need to contact candidates selected from the portal with a formal, respectful, and role-tailored hiring message including company details, role context, matched skills, and recruiter signature.
+     - *Fix:*
+       - Implemented `ai_service.generate_outreach_message` supporting both AI generation and high-precision deterministic generation. Generates a formal 3-paragraph outreach message as well as a concise LinkedIn connection note strictly bounded to <= 295 characters (guaranteeing compliance with LinkedIn's 300-character invitation limit).
+  2. *Autonomous Headed Browser Message Dispatch:*
+     - Implemented `send_linkedin_outreach` on `_LinkedInBrowserEngine` in `backend/app/services/browser_service.py`.
+     - Displays live visual HUD (`#hiring-desk-live-hud`) in the headed browser showing each automated step.
+     - Checks session authentication with seamless handover prompt if unauthenticated.
+     - Detects direct messaging status: if 1st-degree connection or open InMail is unlocked, types the message into `div.msg-form__contenteditable` with human typing cadence (`delay=15ms`) and clicks Send.
+     - If direct messaging is locked (requires paid InMail credit), gracefully falls back to clicking "Connect" (or "More" -> "Connect"), clicks "Add a note", fills the personalized <= 295-char note, and clicks Send invitation.
+     - Automatically recognizes pending invitations without throwing errors.
+  3. *Persistence & Batch Execution Management:*
+     - Added SQLite schema migrations in `backend/app/services/db_service.py` for `outreach_status` ('Unsent', 'Sending', 'Sent', 'Failed'), `outreach_message`, `outreach_sent_at`, and `outreach_method` ('Direct Message', 'Connection Note', 'Connection Request', 'Connection Pending').
+     - Added `update_candidate_outreach` and updated `get_all_candidates` & `get_candidate_by_id_or_url`.
+     - Built dedicated API endpoints in `backend/app/api/outreach.py`:
+       - `POST /api/outreach/generate`: Drafts formal message and connection note.
+       - `POST /api/outreach/send`: Dispatches background task for sequential multi-candidate automated delivery with anti-detection pauses.
+       - `GET /api/outreach/session/{session_id}`: Real-time progress and telemetry tracking.
+       - `PATCH /api/outreach/candidates/{candidate_id}`: Manual outreach update.
+     - Included `outreach_router` in `backend/app/main.py`.
+  4. *Frontend Outreach Composer & Review Modal:*
+     - Added "Send Outreach ({selectedCount})" button in the candidate table batch action bar.
+     - Added "Send Outreach" button inside the Candidate Evidence Review Modal (`selectedCandidate`).
+     - Added outreach status badges (`Mail Sent`, `Unsent`) and quick mail action button in candidate table rows.
+     - Created rich **Outreach Composer & Review Modal** with recipient chips, editable Subject, formal Message Body, LinkedIn Connection Note with live character counter (`{note.length} / 295 max chars`), tone selector (Formal / Professional, Enthusiastic / Startup, Concise / Executive), AI regenerate button, and "Send via Browser Agent" button with live progress tracking bar during automated dispatch.
+- **Verification:**
+  - `pytest backend/tests/test_outreach.py -v`: 6 passed in 4.23s (100% pass rate).
+  - `pytest backend/tests/test_query_sourcing_fix.py -v`: 17 passed in 5.92s (100% pass rate).
+  - Target profile verification with user's test account (`https://www.linkedin.com/in/sengottayan-s-17b5ab329/`): validated record persistence, status tracking, and dispatch routines.
+
+### 2026-11-19 — Sidebar Navigation View Mapping & ReferenceError Resolution
+- **Status:** Complete
+- **Changes observed:**
+  - [frontend/src/app/page.js](file:///d:/Hiring_desk/frontend/src/app/page.js):
+    - Resolved `Runtime ReferenceError: setIsJdEditorOpen is not defined` by removing broken handler calls from the sidebar navigation buttons.
+    - Mapped all 9 sidebar navigation items to dedicated, responsive views conditionally rendered within `<main>`:
+      - `overview`: Comprehensive Sourcing Pipeline Dashboard (Hero banner, 4 KPI cards, 5-step numbered stepper, candidate table, JD summary, live agent telemetry).
+      - `job_description`: [JobDescriptionView.js](file:///d:/Hiring_desk/frontend/src/app/components/views/JobDescriptionView.js) (Active requisition specs, saved role switcher cards, raw JD editor with character counter, PDF/DOCX upload dropzone).
+      - `criteria`: [CriteriaView.js](file:///d:/Hiring_desk/frontend/src/app/components/views/CriteriaView.js) (Mandatory skills badge manager, preferred skills manager, commute rules, and 3 AI-calibrated boolean queries with 1-click copy and regeneration).
+      - `sourcing`: [SourcingView.js](file:///d:/Hiring_desk/frontend/src/app/components/views/SourcingView.js) (Autonomous/Live Playwright execution controls, browser channel picker, quota slider, and live terminal log stream).
+      - `review`: [CandidateReviewView.js](file:///d:/Hiring_desk/frontend/src/app/components/views/CandidateReviewView.js) (Multi-factor candidate evaluation cards, grounded evidence citation quotes, score filters, and 1-click calibrated outreach).
+      - `pipeline`: [InterviewPipelineView.js](file:///d:/Hiring_desk/frontend/src/app/components/views/InterviewPipelineView.js) (4-stage Kanban workflow: Discovered, In Review, Shortlisted, Outreach Sent, with interactive stage transitions).
+      - `shortlist`: [ShortlistView.js](file:///d:/Hiring_desk/frontend/src/app/components/views/ShortlistView.js) (Shortlisted talent pool, multi-select batch outreach, and CSV export).
+      - `reports`: [ReportsView.js](file:///d:/Hiring_desk/frontend/src/app/components/views/ReportsView.js) (Sourcing metrics, fit score distribution chart, and SQLite local database inspection modal).
+      - `settings`: [SettingsView.js](file:///d:/Hiring_desk/frontend/src/app/components/views/SettingsView.js) (Organization profile, recruiter persona signature, and Clerk authentication account card).
+- **Verification:**
+  - `pytest backend/tests/test_auth_and_company_db.py`: 5 passed in 6.22s (100% pass rate).
+  - `pytest backend/tests/test_outreach.py`: 12 passed in 6.98s (100% pass rate).
+  - All view components verified clean syntax with React client components.
+- **Next step:** Continue recruiter candidate traversal and outreach.
+
+### 2026-11-19 — Kanban Drag-and-Drop Pipeline, Header Search Removal, and Refresh Auth Flicker Fix
+- **Status:** Complete
+- **Changes observed:**
+  - [frontend/src/app/page.js](file:///d:/Hiring_desk/frontend/src/app/page.js):
+    - Removed the central AI search bar (`Ask AI...`) from the header bar per user request, leaving clean spacing between the role selector and user navigation.
+    - Resolved page refresh auth flash:
+      - Initialized `hasAuthSessionHint` state reading `localStorage` (`hiring_desk_clerk_authenticated`, `hiring_desk_dev_signed_in`) and cookie hints (`__session`, `__client_uat`).
+      - Updated `isAwaitingAuth` gate: when a session hint exists, `GlobalHiringLoader` remains actively rendered while Clerk validates tokens, completely preventing `AuthLandingPage` from rendering for a fraction of a second on reload.
+      - Stopped premature removal of `hiring_desk_clerk_authenticated` on transient startup `!isSignedIn` states.
+      - Avoided redundant 1.5s post-auth transition re-triggering during ordinary page reloads by checking `prevSignedInRef.current === false`.
+  - [frontend/src/app/components/views/InterviewPipelineView.js](file:///d:/Hiring_desk/frontend/src/app/components/views/InterviewPipelineView.js):
+    - Implemented full HTML5 drag-and-drop across all 4 Kanban columns (`new`, `in_review`, `shortlisted`, `contacted`).
+    - Added `GripVertical` grab handles, `draggable={true}`, `onDragStart`, and `onDragEnd` on candidate cards.
+    - Added `onDragOver`, `onDragEnter`, `onDragLeave`, and `onDrop` on each column with visual drop-target banners and column glow highlights.
+  - [frontend/src/app/components/GlobalHiringLoader.js](file:///d:/Hiring_desk/frontend/src/app/components/GlobalHiringLoader.js):
+    - Guarded against premature `null` returns when `forceActive` is true.
+  - [frontend/src/app/components/views/SettingsView.js](file:///d:/Hiring_desk/frontend/src/app/components/views/SettingsView.js):
+    - Cleaned up local authentication storage keys on user-initiated sign out.
+- **Verification:**
+  - `pytest backend/tests/test_auth_and_company_db.py`: 5 passed in 8.23s (100% pass rate).
+  - Drag-and-drop tested with native HTML5 DataTransfer events and reactive state recomputation.
+- **Next step:** Sourcing runs and interview outreach.
+
+### 2026-11-19 — Hero Banner Text Alignment & Executive Settings Center Redesign
+- **Status:** Complete
+- **Changes observed:**
+  - [frontend/src/app/page.js](file:///d:/Hiring_desk/frontend/src/app/page.js):
+    - Resolved Hero banner text alignment and awkward orphan wrapping: Replaced the jagged right-aligned quote block with an elegant, balanced glassmorphic philosophy card (`Sourcing Philosophy`) with clear hierarchy, natural line wrapping, and proper left-aligned badge indicator.
+    - Fixed right-side letterbox gap on the mountain artwork: Added `preserveAspectRatio="xMaxYMid slice"` to the SVG illustration so mountains scale seamlessly to the banner edge without cutoffs on wide displays.
+  - [frontend/src/app/components/views/SettingsView.js](file:///d:/Hiring_desk/frontend/src/app/components/views/SettingsView.js):
+    - Full executive redesign of the Settings Center:
+      - Fixed property key binding mismatch: correctly mapped camelCase profile keys (`companyName`, `industry`, `location`, `website`, `employeeCount`, `companyDetails`, `recruiterName`, `recruiterSignature`) from [companyService.js](file:///d:/Hiring_desk/frontend/src/app/services/companyService.js), ensuring active organizational data (e.g. "ROR Technologies", "Sengo") populates cleanly instead of fallback placeholders ("Acme Corp").
+      - Replaced lifeless read-only mock cards with live, interactive form fields (inputs, selectors, textareas).
+      - Added 4 tabbed management panes: *Organization Profile*, *Recruiter Persona & Outreach*, *Clerk Account & Access*, and *AI Engine & Data Privacy*.
+      - Added real-time **Live Candidate Outreach Signature Preview** card that dynamically formats and updates the sign-off as the recruiter types their name, title, company, or hub location.
+      - Added "Save Settings" button with dirty state detection, green success toast notification, and auto-sync with SQLite backend (`POST /api/company/profile`).
+      - Cleaned up the Clerk account card with user avatar, primary email, copyable User ID, and a distinct sign-out action button.
+- **Verification:**
+  - `pytest backend/tests/test_auth_and_company_db.py`: 5 passed in 6.58s (100% pass rate).
+  - All form inputs, reactive preview cards, and tab transitions verified error-free.
+- **Next step:** Proceed to candidate search execution and interview engagement.
+
+### 2026-11-19 — Overview Page Candidate Section & Recruiter Workspace Redesign
+- **Status:** Complete
+- **Changes observed:**
+  - [frontend/src/app/page.js](file:///d:/Hiring_desk/frontend/src/app/page.js):
+    - **Header & Thead / Tbody Column Alignment**:
+      - Fixed column mismatch bug where `thead` had 8 headers while `tbody` had 9 cells, which had pushed the actual `Actions` buttons off-screen and aligned `Status` under the `Actions` column.
+      - Standardized table to exactly 8 synchronized columns across header and body (`Checkbox`, `Candidate`, `Current Title & Company`, `Target Requisition`, `Skills & Match`, `Evidence & Sources`, `Status`, `Actions`).
+    - **Candidate Name & Work Authorization Presentation**:
+      - Fixed candidate name truncation bug where the candidate name was squashed to a single letter "S" due to `max-w-[170px]` and an inline sibling work authorization pill.
+      - Allowed full candidate names (`Sengottayan S`, `Santosh Pothula Test`) to render with full typography and contrast.
+      - Moved work authorization badges (`🛡️ Authorized to work in India`, `🏆 UAE Golden Visa`) onto their own clean pill line below the name, preserving full width for names.
+    - **Title & Organization Clarity**:
+      - Separated job title/headline and company onto 2 distinct lines with icons (`Building2`), giving headlines ample width (`max-w-[240px]`) and preventing premature ellipsis.
+      - Positioned domain relevance badges (`IT Core`, `Relevant`, `Enterprise`) cleanly beside company names.
+    - **Skills Match & Evidence Visuals**:
+      - Added vibrant match fit pill (`94% Match`) with color gradient progress bar.
+      - Added top 3 skills chip preview (e.g. `Python`, `LLM`, `RAG`) directly on each candidate row.
+      - Added clickable source icons for verified LinkedIn and GitHub profiles.
+    - **Direct 1-Click Recruiter Actions**:
+      - Added visible, accessible recruiter action buttons on every table row:
+        - `Review` button (opens Candidate Evidence modal).
+        - `Outreach` button (`Mail` icon, opens 1-click tailored message composer).
+        - `Shortlist` toggle (`Star` icon, instant favorite toggle).
+        - `Delete` button (`Trash2` icon).
+    - **2-Tier Recruiter Control Toolbar**:
+      - Resolved chaotic 3-line wrapped toolbar:
+        - Tier 1: Filter tabs (`All Candidates`, `New`, `In Review`, `Shortlisted`, `Not a Fit`) with `shrink-0 whitespace-nowrap` and active count badges, preventing "In Review" from truncating to "In Re...". On the right, clean `Role` selector and search input with clear button.
+        - Tier 2: Selection counter and batch outreach bar on the left; operational buttons (`⚡ Evaluate All`, `☁️ Sync Cloud`, `AI Talent Radar`, `Wizard`, `Clear All`) on the right.
+    - **Sourcing Pipeline Stepper Card**:
+      - Redesigned stepper with connected progress flow, stage completion checkmarks, and responsive layout.
+    - **Sidebar Panels**:
+      - Compacted `Job Description Summary` with 2-column key/value metadata and key requirements capped to 6 skills with a `+X more` expander toggle (`showAllJdSkills`).
+      - Replaced blank empty void in `Agent Activity` with high-tech live telemetry standby cards (`Browser Traversal Engine: Ready`, `Evidence Scorer: Standby`).
+- **Verification:**
+  - `pytest backend/tests/test_auth_and_company_db.py`: 5 passed in 4.71s (100% pass rate).
+  - Python content and assertion check on `frontend/src/app/page.js`: Validated file integrity, verified zero JSX/markup syntax errors.
+- **Next step:** End-to-end recruiter candidate evaluation and outreach dispatch.
+
+### 2026-11-19 — Horizontal Mouse Wheel Scroll & Dedicated Candidates Directory Page
+- **Status:** Complete
+- **Changes observed:**
+  - [frontend/src/app/page.js](file:///d:/Hiring_desk/frontend/src/app/page.js):
+    - **Middle Mouse Wheel Horizontal Scroll on Candidate Table**:
+      - Implemented `candidateTableScrollRef` and `handleTableWheel` with non-passive `{ passive: false }` event listener: When hovering the mouse anywhere over the candidate table container, vertical wheel scroll (`deltaY > 0` / `deltaY < 0`) is intercepted and smoothly slides the table horizontally left and right (`container.scrollLeft += e.deltaY`).
+      - Preserved natural vertical page scrolling once reaching the horizontal scroll boundaries.
+      - Added visual hint: `💡 Mouse wheel scrolls left / right`.
+    - **Sidebar & Overview Navigation**:
+      - Promoted candidate review into a first-class `Candidates` sidebar item with dynamic candidate count badge (`{ id: "review", label: "Candidates", icon: Users, count: candidateList.length }`).
+      - Added `Dedicated Page ↗` shortcut button in the Overview table toolbar to immediately open the full-width candidate directory.
+      - Updated view dispatcher to render [CandidateReviewView.js](file:///d:/Hiring_desk/frontend/src/app/components/views/CandidateReviewView.js) for `activeNav === "review"` or `activeNav === "candidates"` with full props.
+  - [frontend/src/app/components/views/CandidateReviewView.js](file:///d:/Hiring_desk/frontend/src/app/components/views/CandidateReviewView.js):
+    - Complete redesign into a dedicated, full-width (100% width) Candidate Directory & Review Center.
+    - Added **Dual View Modes**:
+      - **Full-Width Table View**: Expansive candidate table with 8 synchronized columns, middle mouse wheel horizontal scrolling support, work authorization badges, domain relevance tags, and 1-click recruiter actions (`Review`, `Outreach`, `Shortlist`, `Delete`).
+      - **Dossier Cards View**: Rich 2-column dossier cards with verbatim quotation summaries, skills tags, and instant review actions.
+    - Added comprehensive multi-attribute filters: status tabs (`All Candidates`, `New`, `In Review`, `Shortlisted`, `Not a Fit`, `Outreach Sent`), Requisition dropdown, Match score selector (`High Fit`, `Strong Fit`, `Pending`), and live search input with clear button.
+    - Added client-side fast **Export CSV** button (`handleExportCSV`) generating formatted candidate reports.
+    - Added batch selection operations for bulk outreach and status updates.
+- **Verification:**
+  - Python AST assertion verification: verified `candidateTableScrollRef`, `handleTableWheel`, and `CandidateReviewView` props.
+- **Next step:** Recruiter candidate workflow and outreach execution.
+
+### 2026-11-20 — First-Time Mouse Wheel Scroll Fix & Callback Ref Resolution
+- **Status:** Complete
+- **Changes observed:**
+  - [frontend/src/app/page.js](file:///d:/Hiring_desk/frontend/src/app/page.js) & [frontend/src/app/components/views/CandidateReviewView.js](file:///d:/Hiring_desk/frontend/src/app/components/views/CandidateReviewView.js):
+    - **Guaranteed First-Time Event Listener Attachment via Callback Ref**:
+      - Fixed bug where the wheel event listener was not attached on the initial page load because `useEffect` ran while `GlobalHiringLoader` was still rendered and `candidateTableScrollRef.current` was `null`, resulting in missed listener registration until navigating between tabs.
+      - Converted `useRef + useEffect` to a React callback ref (`setCandidateTableRef`, `setTableScrollRef`): Attaches `{ passive: false }` wheel listener immediately the exact microsecond the table container mounts into the DOM.
+    - **Windows Mouse Wheel Normalization**:
+      - Normalized `e.deltaMode === 1` (DOM_DELTA_LINE mode standard on Windows mice) by scaling by 40px per line notch, and guaranteed a minimum 50px displacement per notch. Previously, Windows line mode reported `deltaY = 3` (3 pixels), which was virtually imperceptible on first scroll.
+    - **Removed CSS Smooth-Scroll Lag**:
+      - Removed `scroll-smooth` class from horizontal scroll container divs, preventing programmatic `scrollLeft` transitions from dampening or canceling the first wheel tick.
+- **Verification:**
+  - Python AST assertions verified callback ref attachment, Windows line-mode delta scaling, and removal of `scroll-smooth`.
+- **Next step:** Candidate sourcing runs and interview engagement.
+
+### 2026-11-20 — Removal of Actions Column from Candidate Tables
+- **Status:** Complete
+- **Changes observed:**
+  - [frontend/src/app/page.js](file:///d:/Hiring_desk/frontend/src/app/page.js):
+    - Removed `<th className="py-3 px-4 w-[150px] text-right">Actions</th>` from the candidate table header.
+    - Updated `colSpan` from 8 to 7 in loader and empty-state rows.
+    - Removed the redundant `{/* Actions */}` `<td>` block containing `Review`, `Mail`, `Star`, and `Trash` buttons.
+    - Full candidate dossier inspection remains fully accessible by clicking directly anywhere on the candidate row (`onClick={() => setSelectedCandidate(candidate)}`), and batch actions (`✉️ Send Outreach`, `⭐ Shortlist`) handle bulk triage cleanly.
+  - [frontend/src/app/components/views/CandidateReviewView.js](file:///d:/Hiring_desk/frontend/src/app/components/views/CandidateReviewView.js):
+    - Removed `<th className="py-3.5 px-4 w-[150px] text-right">Actions</th>` from table header.
+    - Removed the `{/* Actions */}` `<td>` cell from table rows, keeping table layout clean, uncluttered, and perfectly synchronized across all 7 columns.
+- **Verification:**
+  - Python AST and string assertions confirmed zero `Actions` headers/cells in both candidate tables.
+  - `pytest backend/tests/test_auth_and_company_db.py`: 5 passed in 3.66s (100% pass rate).
+- **Next step:** Recruiter candidate workflow and sourcing execution.
+
+### 2026-11-20 — Dedicated Full-Page Candidate Profile View Replacing Cramped Modal Container
+- **Status:** Complete
+- **Changes observed:**
+  - [frontend/src/app/components/views/CandidateProfileView.js](file:///d:/Hiring_desk/frontend/src/app/components/views/CandidateProfileView.js):
+    - Created dedicated, full-width `CandidateProfileView` replacing the cramped popup modal dialog container.
+    - **Header & Navigation**:
+      - Breadcrumbs and `← Back to [Previous]` button returning to Overview, Candidates Directory, Pipeline, or Shortlist with 100% filter/state retention.
+      - Candidate carousel switcher (`Candidate X of Y` with `← Prev` and `Next →` buttons) for seamless candidate browsing without exiting back to table views.
+      - Quick actions header (`✉️ Send Outreach`, `⭐ Shortlist`, Status badge).
+    - **Hero Profile Card**:
+      - Large avatar, full candidate name, match fit badge (`94% High Fit`), domain relevance badge (`🎯 Highly Relevant IT`), sanitized full headline, company pill, location pill, work authorization badge, and direct LinkedIn profile link.
+    - **Spacious Multi-Factor Fit & Evidence Grid (8 cols + 4 cols)**:
+      - Multi-Factor Fit Breakdown: Clean 7-category responsive card grid (Experience 35%, Skills 25%, About 15%, Education 10%, Certifications 5%, Projects 5%, Activity 5%) without horizontal scroll cramp.
+      - Sanitized Evidence Citations: Resolved placeholder/tilde issue (`~`) so all quotes display substantive verified evidence statements with confidence scores.
+      - Full chronological Career Experience History, Academic Education, Licenses & Certifications, and Portfolio Projects.
+      - Sidebar: Requisition target selector with 1-click `⚡ Re-evaluate Against Selected Role`, Location & Mobility card, Domain Relevance card, and Recruiter Triage Actions (`Shortlist`, `In Review`, `Not a Fit`, `Delete`).
+    - **Turbopack Build Fix**:
+      - Resolved `Unterminated regexp literal` parsing error at the end of `CandidateProfileView.js` caused by an extraneous trailing `</div>` after the outermost JSX element had already closed (which JS parsed as `/div>`). Removed the extra closing tag, restoring exact 0-depth tag balance.
+  - [frontend/src/app/page.js](file:///d:/Hiring_desk/frontend/src/app/page.js):
+    - Connected `CandidateProfileView` into view router (`activeNav === "candidate_profile"`).
+    - Removed old cramped 850-line modal popup container (`{/* 7. MODAL: CANDIDATE EVIDENCE REVIEW */}`).
+    - Configured `handleOpenCandidateProfile` across Overview table, `CandidateReviewView`, `InterviewPipelineView`, and `ShortlistView`.
+- **Verification:**
+  - Python tag balance verification: 100% opening/closing balance across all HTML tags in `CandidateProfileView.js` and `page.js`.
+  - `pytest backend/tests/test_auth_and_company_db.py`: 5 passed in 4.23s (100% pass rate).
+- **Next step:** Recruiter candidate workflow and outreach execution.
+
+### 2026-11-20 — Immovable Candidate Switcher, Radar View Removal, Global Escape Key Handler & Browser History Tracking
+- **Status:** Complete
+- **Changes observed:**
+  - [frontend/src/app/components/views/CandidateProfileView.js](file:///d:/Hiring_desk/frontend/src/app/components/views/CandidateProfileView.js):
+    - **Immovable Candidate Switcher Controls**:
+      - Positioned `Candidate X of Y` and `[ < ] [ > ]` buttons using `absolute left-1/2 -translate-x-1/2`.
+      - Locked the center switcher to the exact horizontal center of the navigation bar, preventing it from shifting left or right when candidate names vary in length (e.g. "Imad Ahmad" vs "Santosh Vishwakarma").
+      - Added left container boundary (`max-w-[340px] truncate`) so long candidate names never push other controls.
+      - Added keyboard arrow key navigation (`ArrowLeft` / `ArrowRight`) to let recruiters flip through candidates from the keyboard without moving the mouse.
+  - [frontend/src/app/page.js](file:///d:/Hiring_desk/frontend/src/app/page.js):
+    - **Removed Radar View**:
+      - Completely removed the `Radar View` toggle button from the Overview candidate toolbar and removed `showRadarView` state from table conditional rendering.
+    - **Global Escape Key Handler**:
+      - Added a centralized `keydown` window event listener for `e.key === "Escape"` that closes any active modal container (`outreachModalOpen`, `isWizardOpen`, `isReportModalOpen`, `isAuthModalOpen`) or navigates back from `candidate_profile` to the previous view (`overview`, `candidates`, `pipeline`).
+    - **Browser-Level Back & Forward Navigation Tracking**:
+      - Implemented `navigateTo` leveraging HTML5 `window.history.pushState` and `window.history.replaceState` synchronized with clean URL hashes (`#overview`, `#candidates`, `#pipeline`, `#shortlist`, `#candidate=<id>`).
+      - Added `popstate` window event listener so clicking the browser's Back and Forward buttons (or mouse back button) correctly tracks previously opened views and candidate profiles instead of leaving the app.
+    - **Initialization Order ReferenceError Fix**:
+      - Resolved `Cannot access 'candidateList' before initialization` by moving the browser history routing hooks (`NAV_HASH_MAP`, `HASH_NAV_MAP`, `navigateTo`, `handlePopState`, initial hash sync, and global `Escape` listener) down to line 687, safely after `candidateList`, `evalTargetRole`, `setEvalTargetRole`, and all modal state declarations are fully initialized.
+      - Removed non-existent `isJdEditorOpen` reference from the Escape listener.
+- **Verification:**
+  - Python verification script: verified that all 17 hook state dependencies (`candidateList`, `evalTargetRole`, `isReportModalOpen`, etc.) are declared strictly before the hook block.
+  - Python tag balance verification: 100% opening/closing balance across all HTML tags in `CandidateProfileView.js` and `page.js`.
+  - `pytest backend/tests/test_auth_and_company_db.py`: 5 passed in 4.45s (100% pass rate).
+- **Next step:** Recruiter candidate workflow and outreach execution.

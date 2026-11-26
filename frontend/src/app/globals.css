@@ -50,4 +50,19 @@ body {
   background: #94a3b8;
 }
 
+/* Hide Clerk "Secured by Clerk" and "Development mode" footer item while strictly preserving "Don't have an account? Sign up" */
+.cl-footerItem,
+.cl-internal-r93pb5,
+[data-clerk-dev-mode-notice],
+[data-clerk-dev-mode-overlay] {
+  display: none !important;
+}
+
+/* Keep "Don't have an account? Sign up" footer action visible and clean */
+.cl-footerAction {
+  display: flex !important;
+  margin-top: 0.25rem !important;
+}
+
+
 

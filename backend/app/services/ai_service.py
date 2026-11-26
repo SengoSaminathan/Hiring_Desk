@@ -207,6 +207,48 @@ class AIService:
             return "Entry Level"
         return "Senior"
 
+    @staticmethod
+    def is_executive_or_founder(headline: str, role_title: Optional[str] = None) -> bool:
+        """Detects whether a candidate profile headline indicates an active Founder, CEO, or business owner.
+
+        Agency owners, startup founders, and active CEOs are not suitable candidates for standard
+        employee/individual contributor/engineering lead requisitions.
+        """
+        if not headline:
+            return False
+
+        if role_title:
+            r_lower = role_title.lower()
+            if any(k in r_lower for k in ("ceo", "chief executive officer", "founder", "managing director", "president")):
+                return False
+
+        h_lower = headline.lower()
+        cleaned_h = re.sub(
+            r"\b(?:ex[\s\-]?(?:founder|ceo|co-founder|cofounder|owner|managing director)|former[\s\-]+(?:founder|ceo|co-founder|cofounder|owner|managing director))\b",
+            "",
+            h_lower,
+        )
+
+        EXEC_PATTERNS = [
+            r"\bfounder\s*[/&|\+]\s*ceo\b",
+            r"\bceo\s*[/&|\+]\s*founder\b",
+            r"\bco-?founder\s*[/&|\+]\s*ceo\b",
+            r"\bco-?founder\b",
+            r"\bfounder\b",
+            r"\bceo\b",
+            r"\bchief executive officer\b",
+            r"\bmanaging director\b",
+            r"\bagency owner\b",
+            r"\bbusiness owner\b",
+            r"\bproprietor\b",
+        ]
+
+        for pat in EXEC_PATTERNS:
+            if re.search(pat, cleaned_h):
+                return True
+
+        return False
+
     def analyze_job_description(self, raw_jd: str) -> AnalyzeJobResponse:
         """Parses a Job Description into complete structured criteria across all sections and search queries."""
         heuristics = self._extract_jd_section_heuristics(raw_jd)
@@ -1019,7 +1061,19 @@ JSON Schema:
                 status = "Needs Verification"
                 reason = f"Candidate location is {cand_curr or 'unspecified'}; willingness to relocate to Dubai is unknown and requires recruiter verification. Candidate is not rejected."
         else:
-            if any(t in cand_curr_lower for t in target_locs) or ("remote" in target_locs):
+            BROAD_REGIONS = {"india", "united states", "usa", "remote", "flexible", "tamil nadu", "tamilnadu", "karnataka", "telangana", "maharashtra"}
+            city_targets = [t for t in target_locs if t not in BROAD_REGIONS]
+
+            is_exact_city = any(c in cand_curr_lower for c in city_targets) if city_targets else False
+            is_state_match = any(t in cand_curr_lower for t in target_locs if t in ("tamil nadu", "tamilnadu", "karnataka", "telangana", "maharashtra"))
+
+            if is_exact_city or ("remote" in target_locs):
+                status = "Compatible"
+                reason = f"Currently based in target city ({cand_curr})."
+            elif is_state_match and city_targets:
+                status = "Compatible"
+                reason = f"Candidate is based in {cand_curr} (regional/state match for {', '.join(t.title() for t in city_targets)}); local commute or on-site relocation is standard."
+            elif any(t in cand_curr_lower for t in target_locs):
                 status = "Compatible"
                 reason = f"Currently based in target location ({cand_curr})."
             elif willingness.lower() in ("yes", "likely"):
@@ -1036,10 +1090,15 @@ JSON Schema:
                     reason = f"Candidate location is unspecified; relocation willingness to {', '.join(cleaned_targets)} is unknown and requires recruiter verification."
 
         auth_label = "UAE Golden Visa Holder" if has_golden_visa else ("Citizen" if is_citizen else (work_auth or "Standard"))
+        cand_pref_locs = getattr(candidate, "preferred_work_locations", []) or []
+        cand_pref_str = ", ".join(cand_pref_locs) if cand_pref_locs else "Not published on profile"
+        req_loc_str = ", ".join(cleaned_targets) if cleaned_targets else (cand_curr or "Any / Remote")
         return {
             "status": status,
             "current_location": cand_curr or "Location on Profile",
-            "preferred_work_location": ", ".join(cleaned_targets) if cleaned_targets else (cand_curr or "Any / Remote"),
+            "target_requisition_location": req_loc_str,
+            "requisition_location": req_loc_str,
+            "preferred_work_location": cand_pref_str,
             "willingness_to_relocate": willingness,
             "work_authorization": auth_label,
             "reason": reason,
@@ -1062,6 +1121,13 @@ JSON Schema:
         for exp in (candidate.experience_history or []):
             full_text += f" {exp.get('role', '')} {exp.get('title', '')} {exp.get('company', '')} {exp.get('description', '')}"
         full_lower = full_text.lower()
+
+        # Check for Founder / CEO / Business Owner mismatch for employee requisitions
+        if self.is_executive_or_founder(candidate.headline or "", target_role):
+            return (
+                "Not Relevant",
+                f"Candidate is an active Founder/CEO/Business Owner ({candidate.headline}). Active business owners and agency founders are not suitable candidates for employee vacancies."
+            )
 
         edu_training_signals = [
             "ministry of education", "teacher", "trainer", "training", "edtech",
@@ -1113,6 +1179,7 @@ JSON Schema:
                 "3. NOT AVAILABLE / INSUFFICIENT EVIDENCE: Section is missing or marked 'Not specified'. Set score to null and status to 'Not Available'. DO NOT assign 0% or penalize composite fit for missing sections!\n"
                 "4. NORMALIZE composite fit score strictly across available categories.\n"
                 "5. Distinguish location compatibility based on target location criteria. Never reject for unknown relocation willingness.\n"
+                "6. EXECUTIVE / FOUNDER MISMATCH: Active Founders, Co-Founders, CEOs, Managing Directors, and Agency Owners (e.g. 'Founder/CEO/Head of AI', 'Founder & CEO', 'Managing Director', 'Owner') are running their own businesses. They are NOT suitable candidates for standard employee/individual contributor/engineering lead requisitions. Do NOT align them with senior employee roles. Score their Experience as 'Not Matched' (score <= 25%) and explicitly explain that an active founder/CEO of their own firm is not viable for an employee role.\n"
                 "Output strictly in valid JSON matching the schema."
             )
             candidate_summaries = []
@@ -1305,6 +1372,7 @@ Output strictly in JSON format:
                 "3. NOT AVAILABLE / INSUFFICIENT EVIDENCE: Section is missing or marked 'Not specified'. Set score to null and status to 'Not Available'. DO NOT assign 0% or penalize composite fit for missing sections!\n"
                 "4. NORMALIZE composite fit score strictly across available categories.\n"
                 "5. Distinguish location compatibility based on target location criteria. Never reject for unknown relocation willingness.\n"
+                "6. EXECUTIVE / FOUNDER MISMATCH: Active Founders, Co-Founders, CEOs, Managing Directors, and Agency Owners (e.g. 'Founder/CEO/Head of AI', 'Founder & CEO', 'Managing Director', 'Owner') are running their own businesses. They are NOT suitable candidates for standard employee/individual contributor/engineering lead requisitions. Do NOT align them with senior employee roles. Score their Experience as 'Not Matched' (score <= 25%) and explicitly explain that an active founder/CEO of their own firm is not viable for an employee role.\n"
                 "Output strictly in valid JSON matching the schema."
             )
             _eval_loc = getattr(criteria, "location", None)
@@ -1504,7 +1572,13 @@ Output strictly in JSON format:
             exp_evidence = headline_text.split("•")[0].strip()
             exp_source = "Headline"
 
-        if domain_tier == "Partially Relevant":
+        if self.is_executive_or_founder(headline_text, criteria.job_title):
+            # Executive / Founder mismatch for standard employee roles
+            exp_score = 25.0
+            exp_status = "Not Matched"
+            exp_state = "available_irrelevant"
+            exp_expl = f"Candidate is an active Founder/CEO/Business Owner ({exp_evidence}). Active founders and agency owners are running their own businesses and are not suitable candidates for employee vacancies."
+        elif domain_tier == "Partially Relevant":
             # State B: Available but non-engineering / EdTech domain
             exp_score = 45.0
             exp_status = "Partially Matched"
@@ -2113,6 +2187,174 @@ JSON Schema:
             "optimized_query": current_query,
             "strategy": "talent_pool_saturated",
             "explanation": "Search pool exhausted for current role parameters. All reachable candidate profiles gathered.",
+        }
+
+    def generate_outreach_message(
+        self,
+        candidate: Any,
+        role_title: str = "Senior Engineer",
+        company_name: str = "Our Team",
+        company_details: Optional[str] = None,
+        recruiter_name: str = "Talent Acquisition Team",
+        tone: str = "formal",
+        force_deterministic: bool = False,
+    ) -> Dict[str, str]:
+        """Generates a personalized, professional LinkedIn outreach message and 300-char connection note."""
+        # Normalize candidate metadata
+        if isinstance(candidate, str):
+            c_name = candidate
+            headline = ""
+            skills = []
+            current_comp = ""
+        elif isinstance(candidate, dict):
+            c_name = candidate.get("name", "Candidate")
+            headline = candidate.get("headline", "")
+            skills = candidate.get("skills", [])
+            current_comp = candidate.get("current_company", "")
+        else:
+            c_name = getattr(candidate, "name", "Candidate")
+            headline = getattr(candidate, "headline", "")
+            skills = getattr(candidate, "skills", [])
+            current_comp = getattr(candidate, "current_company", "")
+
+        first_name = c_name.split()[0].strip() if c_name and c_name.strip() else "Candidate"
+        clean_hl = re.sub(r"\s+", " ", headline).strip() if headline else ""
+
+        # Attempt Gemini AI generation if available and not forced deterministic
+        if not force_deterministic and self.is_ai_available():
+            prompt = f"""
+Draft a personalized LinkedIn candidate outreach message for:
+Candidate Name: {c_name}
+First Name: {first_name}
+Current Headline/Role: {clean_hl}
+Current Organization: {current_comp}
+Key Skills: {', '.join(skills[:5]) if skills else 'Relevant industry experience'}
+
+Opportunity Details:
+Hiring Role: {role_title}
+Hiring Organization: {company_name}
+Company Context: {company_details or 'A high-growth team delivering cutting-edge solutions.'}
+Recruiter / Sender: {recruiter_name}
+Tone: {tone} (formal, respectful, clear, and high-conversion)
+
+Output strict JSON:
+{{
+  "subject": "<Concise subject under 60 chars>",
+  "message_body": "<Formal 3-paragraph message addressed to Dear {first_name}, citing their background, describing role/company, inviting to 15-min chat, signed with {recruiter_name} and {company_name}>",
+  "connection_note": "<Concise connection request note STRICTLY UNDER 290 CHARACTERS including spaces, greeting {first_name}, mentioning {role_title} at {company_name}, and inviting to connect>"
+}}
+"""
+            sys_inst = (
+                "You are an executive talent acquisition partner drafting a high-impact, polite, and formal LinkedIn outreach message. "
+                "The 'connection_note' MUST NEVER exceed 295 characters as LinkedIn rejects invitation notes above 300 chars."
+            )
+            try:
+                res = self._call_gemini_json(prompt, sys_inst)
+                if res and isinstance(res, dict) and "message_body" in res:
+                    subj = str(res.get("subject") or f"Opportunity: {role_title} at {company_name}").strip()
+                    body = str(res.get("message_body", "")).strip()
+                    note = str(res.get("connection_note", "")).strip()
+
+                    # Strictly enforce LinkedIn's <= 200 character limit on free accounts (195 chars)
+                    if len(note) > 195:
+                        note = note[:192].rstrip() + "..."
+
+                    if body:
+                        return {
+                            "subject": subj,
+                            "message_body": body,
+                            "connection_note": note or self._deterministic_connection_note(first_name, role_title, company_name, skills, recruiter_name),
+                        }
+            except Exception as e:
+                logger.warning("Gemini outreach generation error: %s. Using deterministic generator.", e)
+
+        # High-precision deterministic fallback
+        return self._deterministic_outreach_generator(
+            first_name=first_name,
+            headline=clean_hl,
+            skills=skills,
+            role_title=role_title,
+            company_name=company_name,
+            company_details=company_details,
+            recruiter_name=recruiter_name,
+        )
+
+    def _deterministic_connection_note(
+        self,
+        first_name: str,
+        role_title: str,
+        company_name: str,
+        skills: Optional[List[str]],
+        recruiter_name: str,
+    ) -> str:
+        """Constructs a connection note guaranteed to be <= 195 characters for LinkedIn free/premium limits."""
+        skill_mention = skills[0] if (skills and len(skills[0]) <= 15) else "your background"
+        note = (
+            f"Hi {first_name}, impressed by {skill_mention}! "
+            f"We're hiring a {role_title} at {company_name} and think you'd be a great fit. "
+            f"Would love to connect! - {recruiter_name}"
+        )
+        if len(note) > 195:
+            note = (
+                f"Hi {first_name}, we're actively hiring a {role_title} at {company_name} and "
+                f"would love to connect. Best, {recruiter_name}"
+            )
+        if len(note) > 195:
+            note = f"Hi {first_name}, hiring for {role_title} at {company_name}. Would love to connect! - {recruiter_name}"
+        if len(note) > 195:
+            note = f"Hi {first_name}, hiring for {role_title}. Would love to connect!"
+        return note[:195]
+
+    def _deterministic_outreach_generator(
+        self,
+        first_name: str,
+        headline: str,
+        skills: Optional[List[str]],
+        role_title: str,
+        company_name: str,
+        company_details: Optional[str],
+        recruiter_name: str,
+    ) -> Dict[str, str]:
+        """Deterministic formal hiring outreach message generator."""
+        subject = f"Opportunity: {role_title} at {company_name}"
+
+        # Clean headline for inclusion
+        clean_hl = headline
+        for pref in ["Looking for", "Actively seeking", "Open to"]:
+            if clean_hl.lower().startswith(pref.lower()):
+                clean_hl = clean_hl[len(pref):].strip(": -")
+
+        hl_phrase = f"your work as {clean_hl}" if clean_hl else "your professional track record"
+        
+        top_skills = [s for s in (skills or []) if isinstance(s, str) and len(s) < 25][:3]
+        skills_phrase = f"your proven background in {', '.join(top_skills)}" if top_skills else "your technical depth"
+
+        company_desc = f" ({company_details.strip()})" if company_details and len(company_details.strip()) > 3 else ""
+
+        message_body = (
+            f"Dear {first_name},\n\n"
+            f"I hope this note finds you well. I came across your profile and was genuinely impressed by {hl_phrase}.\n\n"
+            f"We are currently expanding our team at {company_name}{company_desc} and are actively hiring for a {role_title}. "
+            f"Given {skills_phrase}, we believe your experience and leadership would be a tremendous asset to what we are building.\n\n"
+            f"I would welcome the opportunity to connect and share more context about the role, our current roadmap, and team culture. "
+            f"Are you open to a brief introductory conversation this week?\n\n"
+            f"Warm regards,\n"
+            f"{recruiter_name}\n"
+            f"{company_name}"
+        )
+
+        connection_note = self._deterministic_connection_note(
+            first_name=first_name,
+            role_title=role_title,
+            company_name=company_name,
+            skills=skills,
+            recruiter_name=recruiter_name,
+        )
+
+        return {
+            "subject": subject,
+            "message_body": message_body,
+            "connection_note": connection_note,
         }
 
 

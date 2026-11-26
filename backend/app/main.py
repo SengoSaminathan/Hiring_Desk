@@ -9,6 +9,8 @@ from backend.app.core.config import settings
 from backend.app.api.health import router as health_router
 from backend.app.api.jobs import router as jobs_router
 from backend.app.api.sourcing import router as sourcing_router
+from backend.app.api.outreach import router as outreach_router
+from backend.app.api.auth import router as auth_router
 
 if sys.platform == "win32" and "pytest" not in sys.modules:
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -39,6 +41,8 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(jobs_router)
 app.include_router(sourcing_router)
+app.include_router(outreach_router)
+app.include_router(auth_router)
 
 
 @app.on_event("startup")

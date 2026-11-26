@@ -162,3 +162,77 @@ CREATE POLICY "Allow full access to jobs for all roles"
     USING (true)
     WITH CHECK (true);
 
+-- ==============================================================================
+-- TABLE 4: companies
+-- Recruiter organization details, mission, value proposition, and outreach persona.
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.companies (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    name TEXT NOT NULL,
+    industry TEXT,
+    website TEXT,
+    location TEXT,
+    employee_count TEXT DEFAULT '50-250',
+    value_proposition TEXT,
+    recruiter_name TEXT,
+    recruiter_signature TEXT,
+    created_by_user_id TEXT,
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Trigger for companies updated_at
+DROP TRIGGER IF EXISTS set_companies_updated_at ON public.companies;
+CREATE TRIGGER set_companies_updated_at
+BEFORE UPDATE ON public.companies
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at_column();
+
+-- ==============================================================================
+-- TABLE 5: users
+-- Synced HR recruiters and portal users authenticated via Clerk.
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.users (
+    id TEXT PRIMARY KEY,                            -- Clerk User ID (e.g. user_...)
+    email TEXT UNIQUE NOT NULL,
+    full_name TEXT,
+    first_name TEXT,
+    last_name TEXT,
+    role TEXT DEFAULT 'Recruiter',
+    company_id TEXT REFERENCES public.companies(id) ON DELETE SET NULL,
+    avatar_url TEXT,
+    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Trigger for users updated_at
+DROP TRIGGER IF EXISTS set_users_updated_at ON public.users;
+CREATE TRIGGER set_users_updated_at
+BEFORE UPDATE ON public.users
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at_column();
+
+-- Indexes for companies & users
+CREATE INDEX IF NOT EXISTS idx_companies_created_by ON public.companies(created_by_user_id);
+CREATE INDEX IF NOT EXISTS idx_users_email ON public.users(email);
+CREATE INDEX IF NOT EXISTS idx_users_company_id ON public.users(company_id);
+
+-- RLS policies for companies & users
+ALTER TABLE public.companies ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow full access to companies for all roles" ON public.companies;
+CREATE POLICY "Allow full access to companies for all roles"
+    ON public.companies
+    FOR ALL
+    USING (true)
+    WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow full access to users for all roles" ON public.users;
+CREATE POLICY "Allow full access to users for all roles"
+    ON public.users
+    FOR ALL
+    USING (true)
+    WITH CHECK (true);
+
+

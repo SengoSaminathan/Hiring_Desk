@@ -222,10 +222,100 @@ def test_geographic_compatibility_filtering():
     assert is_card_geographically_compatible("Cairo, Egypt", target_india) is False
     assert is_card_geographically_compatible("San Francisco, CA, United States", target_india) is False
 
-    # Relevance scoring
+    # Relevance scoring: exact city gets 100, state gets 75, country gets 50
     assert score_card_geographic_relevance("Coimbatore, Tamil Nadu, India", target_india) == 100
-    assert score_card_geographic_relevance("Tamil Nadu, India", target_india) == 100
-    assert score_card_geographic_relevance("Bengaluru, India", target_india) == 75
+    assert score_card_geographic_relevance("Tamil Nadu, India", target_india) == 75
+    assert score_card_geographic_relevance("Bengaluru, India", target_india) == 50
+
+
+def test_is_executive_or_founder_detection():
+    """Verify that active Founders, CEOs, and agency owners are flagged and ex-founders are preserved."""
+    from backend.app.services.browser_service import is_executive_or_founder
+
+    # Positive matches (should be filtered for employee roles)
+    assert is_executive_or_founder("Founder/CEO/Head of AI at Nunnari Labs", "Senior AI Lead") is True
+    assert is_executive_or_founder("Founder & CEO • Generative AI Specialist", "Senior Fullstack Engineer") is True
+    assert is_executive_or_founder("Co-Founder and CTO at Tech Startup", "Lead UI Engineer") is True
+    assert is_executive_or_founder("Managing Director at IT Solutions", "Data Analyst") is True
+    assert is_executive_or_founder("Agency Owner | Full Stack Web Developer", "Senior Fullstack Engineer") is True
+
+    # Negative matches (should NOT be filtered)
+    assert is_executive_or_founder("Senior AI Lead at Enterprise SaaS", "Senior AI Lead") is False
+    assert is_executive_or_founder("Lead Fullstack Engineer • React / Node.js", "Senior Fullstack Engineer") is False
+    assert is_executive_or_founder("Ex-Founder | Senior AI Architect at Microsoft", "Senior AI Lead") is False
+    assert is_executive_or_founder("Former CEO, now Staff Engineer at Google", "Senior AI Lead") is False
+
+    # When role itself IS for a CEO / Founder, do not filter
+    assert is_executive_or_founder("Founder & CEO", "Chief Executive Officer") is False
+    assert is_executive_or_founder("Co-Founder", "Founder") is False
+
+
+def test_evaluator_rejects_founder_for_senior_ai_lead():
+    """Verify that an active Founder/CEO receives 'Not Matched' and penalized fit for an employee vacancy."""
+    from backend.app.schemas.candidates import CandidateProfile
+    from backend.app.schemas.jobs import StructuredJobCriteria
+
+    cand = CandidateProfile(
+        id="cand_navaneeth_test",
+        canonical_url="https://www.linkedin.com/in/navaneethmalingan",
+        name="Navaneeth Malingan",
+        headline="Founder/CEO/Head of AI at Nunnari Labs • Enabler at AI Tamil Nadu Community",
+        current_company="Nunnari Labs",
+        location="Tamil Nadu",
+        current_location="Tamil Nadu",
+        about="Founder and CEO driving AI robotics and web solutions.",
+        skills=["Python", "AI", "Robotics", "IoT", "Web Technologies"],
+        experience_history=[{"title": "Founder/CEO/Head of AI", "company": "Nunnari Labs", "description": "Leading startup"}],
+    )
+
+    criteria = StructuredJobCriteria(
+        job_title="Senior AI Lead",
+        seniority_level="Senior",
+        min_years_experience=5.0,
+        mandatory_skills=["Python", "AI", "Machine Learning"],
+        preferred_locations=["Chennai", "Tamil Nadu"],
+    )
+
+    evaluation = ai_service._deterministic_evaluator(cand, criteria)
+    exp_eval = evaluation.category_evaluations.get("experience")
+    assert exp_eval is not None
+    assert exp_eval.status == "Not Matched"
+    assert exp_eval.score <= 30.0
+    assert "Founder/CEO" in exp_eval.explanation or "Active founder" in exp_eval.explanation
+    # Total fit score should be heavily penalized (below 50%)
+    assert evaluation.fit_score < 50.0
+
+
+def test_analyze_location_compatibility_distinguishes_city_from_state():
+    """Verify that location analysis distinguishes exact city match from state match."""
+    from backend.app.schemas.candidates import CandidateProfile
+
+    cand_city = CandidateProfile(
+        id="c_chennai",
+        canonical_url="https://www.linkedin.com/in/candidatechennai",
+        headline="Senior AI Engineer",
+        name="Candidate Chennai",
+        location="Chennai, Tamil Nadu, India",
+        current_location="Chennai, Tamil Nadu, India",
+    )
+    res_city = ai_service.analyze_location_compatibility(cand_city, target_locations=["Chennai", "Tamil Nadu", "India"])
+    assert res_city["status"] == "Compatible"
+    assert "target city" in res_city["reason"].lower()
+
+    cand_state = CandidateProfile(
+        id="c_tamilnadu",
+        canonical_url="https://www.linkedin.com/in/candidatetamilnadu",
+        headline="Senior AI Engineer",
+        name="Candidate Tamil Nadu",
+        location="Tamil Nadu",
+        current_location="Tamil Nadu",
+    )
+    res_state = ai_service.analyze_location_compatibility(cand_state, target_locations=["Chennai", "Tamil Nadu", "India"])
+    assert res_state["status"] == "Compatible"
+    assert "regional" in res_state["reason"].lower() or "state" in res_state["reason"].lower()
+    # Target location is recorded accurately
+    assert "Chennai" in res_state["target_requisition_location"]
+
 
 
 def test_clean_skill_tokens_sanitization():

@@ -58,7 +58,32 @@ import {
   Cloud,
   Trash2,
   Building2,
+  Mail,
+  Send,
+  SendHorizontal,
+  MessageSquare,
 } from "lucide-react";
+
+import { useCandidatesQuery } from "./hooks/useCandidatesQuery";
+import { HiringRadarLoader } from "./components/HiringRadarLoader";
+import GlobalHiringLoader from "./components/GlobalHiringLoader";
+import UserNav from "./components/UserNav";
+import { useAppAuth } from "./components/ClerkAuthProvider";
+import AuthLandingPage from "./components/AuthLandingPage";
+import {
+  getCompanyProfile,
+  subscribeCompanyProfile,
+} from "./services/companyService";
+
+import JobDescriptionView from "./components/views/JobDescriptionView";
+import CriteriaView from "./components/views/CriteriaView";
+import SourcingView from "./components/views/SourcingView";
+import CandidateReviewView from "./components/views/CandidateReviewView";
+import InterviewPipelineView from "./components/views/InterviewPipelineView";
+import ShortlistView from "./components/views/ShortlistView";
+import ReportsView from "./components/views/ReportsView";
+import SettingsView from "./components/views/SettingsView";
+import CandidateProfileView from "./components/views/CandidateProfileView";
 
 // Inline brand SVGs for pixel-perfect social icons
 function LinkedInIcon({ className = "h-3.5 w-3.5" }) {
@@ -317,6 +342,73 @@ const VERIFIED_AVATARS = [
 ];
 
 export default function Home() {
+  const { isSignedIn, isLoaded, user } = useAppAuth();
+  const [hasMounted, setHasMounted] = useState(false);
+  const [hasAuthSessionHint, setHasAuthSessionHint] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      const authLocal = localStorage.getItem("hiring_desk_clerk_authenticated") === "true";
+      const devAuth = localStorage.getItem("hiring_desk_dev_signed_in") === "true";
+      const hasCookie =
+        document.cookie.includes("__session=") ||
+        (document.cookie.includes("__client_uat=") && !document.cookie.includes("__client_uat=0"));
+      return authLocal || devAuth || hasCookie;
+    } catch (e) {
+      return false;
+    }
+  });
+
+  // Auth transition animation state upon fresh sign-up / sign-in action
+  const [showAuthTransition, setShowAuthTransition] = useState(false);
+  const prevSignedInRef = useRef(null);
+
+  useEffect(() => {
+    setHasMounted(true);
+    try {
+      const authLocal = localStorage.getItem("hiring_desk_clerk_authenticated") === "true";
+      const devAuth = localStorage.getItem("hiring_desk_dev_signed_in") === "true";
+      const hasCookie =
+        document.cookie.includes("__session=") ||
+        (document.cookie.includes("__client_uat=") && !document.cookie.includes("__client_uat=0"));
+      if (authLocal || devAuth || hasCookie) {
+        setHasAuthSessionHint(true);
+      }
+    } catch (e) {}
+  }, []);
+
+  // Watch for successful sign-in / sign-up and trigger the radar animation
+  useEffect(() => {
+    if (isSignedIn) {
+      try {
+        localStorage.setItem("hiring_desk_clerk_authenticated", "true");
+        setHasAuthSessionHint(true);
+        // Clean URL hash if it was from sign-in/sign-up or sso-callback
+        if (
+          window.location.hash &&
+          (window.location.hash.includes("sign-in") ||
+            window.location.hash.includes("sign-up") ||
+            window.location.hash.includes("sso-callback"))
+        ) {
+          window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        }
+      } catch (e) {}
+
+      // Only trigger the 1.5s post-auth transition if the user just signed in from signed-out state in this active tab session
+      if (prevSignedInRef.current === false) {
+        setShowAuthTransition(true);
+        const timer = setTimeout(() => {
+          setShowAuthTransition(false);
+        }, 1500);
+        return () => clearTimeout(timer);
+      }
+      prevSignedInRef.current = true;
+    } else if (isLoaded) {
+      if (prevSignedInRef.current === null) {
+        prevSignedInRef.current = false;
+      }
+    }
+  }, [isSignedIn, isLoaded]);
+
   // Theme state: defaults to light (as per the user's uploaded reference image)
   const [isDarkMode, setIsDarkMode] = useState(false);
 
@@ -352,9 +444,32 @@ export default function Home() {
   const [generatingQueries, setGeneratingQueries] = useState(false);
   const [regeneratingQueryId, setRegeneratingQueryId] = useState(null);
 
+  // Automated Outreach Composer State
+  const [outreachModalOpen, setOutreachModalOpen] = useState(false);
+  const [outreachCandidates, setOutreachCandidates] = useState([]);
+  const [outreachCompanyName, setOutreachCompanyName] = useState("Acme Corp");
+  const [outreachCompanyDetails, setOutreachCompanyDetails] = useState(
+    "leading innovation in enterprise software and scalable systems"
+  );
+  const [outreachRecruiterName, setOutreachRecruiterName] = useState(
+    "HR Talent Acquisition"
+  );
+  const [outreachRoleTitle, setOutreachRoleTitle] = useState("");
+  const [outreachTone, setOutreachTone] = useState("formal");
+  const [outreachSubject, setOutreachSubject] = useState("");
+  const [outreachMessageBody, setOutreachMessageBody] = useState("");
+  const [outreachConnectionNote, setOutreachConnectionNote] = useState("");
+  const [outreachGenerating, setOutreachGenerating] = useState(false);
+  const [outreachSending, setOutreachSending] = useState(false);
+  const [outreachSessionId, setOutreachSessionId] = useState(null);
+  const [outreachProgress, setOutreachProgress] = useState(null);
+  const [outreachComplete, setOutreachComplete] = useState(false);
+
   // Modals & Handover Gates
   const [selectedCandidate, setSelectedCandidate] = useState(null);
-  const scoreScrollRef = useRef(null);
+  const [previousNav, setPreviousNav] = useState("overview");
+
+const scoreScrollRef = useRef(null);
   const scoreSectionRef = useRef(null);
   const [canScrollCategoriesLeft, setCanScrollCategoriesLeft] = useState(false);
   const [canScrollCategoriesRight, setCanScrollCategoriesRight] = useState(true);
@@ -445,6 +560,54 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState("all");
   const [selectAll, setSelectAll] = useState(false);
+  const [showAllJdSkills, setShowAllJdSkills] = useState(false);
+
+  // Candidate Table Horizontal Scroll on Middle Mouse Wheel (Callback Ref for guaranteed first-time attachment)
+  const candidateTableNodeRef = useRef(null);
+
+  const handleTableWheel = useCallback((e) => {
+    const container = candidateTableNodeRef.current;
+    if (!container) return;
+
+    const maxScrollLeft = container.scrollWidth - container.clientWidth;
+    if (maxScrollLeft <= 0) return;
+
+    // Detect vertical mouse wheel movement
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      // Normalize delta across Windows line mode (deltaMode = 1) and pixel mode (deltaMode = 0)
+      let delta = e.deltaY;
+      if (e.deltaMode === 1) {
+        delta *= 40; // 40px per line on Windows mouse wheel
+      } else if (e.deltaMode === 2) {
+        delta *= container.clientWidth * 0.8;
+      }
+      // Guarantee responsive, immediate visible movement on the very first notch
+      if (Math.abs(delta) < 40 && delta !== 0) {
+        delta = Math.sign(delta) * 50;
+      }
+
+      const isDown = delta > 0;
+      const isUp = delta < 0;
+
+      const canScrollRight = isDown && container.scrollLeft < maxScrollLeft - 1;
+      const canScrollLeft = isUp && container.scrollLeft > 1;
+
+      if (canScrollRight || canScrollLeft) {
+        e.preventDefault();
+        container.scrollLeft += delta;
+      }
+    }
+  }, []);
+
+  const setCandidateTableRef = useCallback((node) => {
+    if (candidateTableNodeRef.current) {
+      candidateTableNodeRef.current.removeEventListener("wheel", handleTableWheel);
+    }
+    candidateTableNodeRef.current = node;
+    if (node) {
+      node.addEventListener("wheel", handleTableWheel, { passive: false });
+    }
+  }, [handleTableWheel]);
 
   // Pipeline execution & telemetry (completely empty initial logs)
   const [analyzing, setAnalyzing] = useState(false);
@@ -495,6 +658,210 @@ export default function Home() {
       setApiBase(process.env.NEXT_PUBLIC_API_URL || `http://${host}:8001`);
     }
   }, []);
+
+  // TanStack Query candidate cache integration & radar state
+  const [showRadarView, setShowRadarView] = useState(false);
+  const {
+    candidates: queryCandidates,
+    isLoading: isCandidatesLoading,
+    isFetching: isCandidatesFetching,
+    refetch: refetchCandidates,
+    invalidateCandidates,
+    setCandidatesData,
+  } = useCandidatesQuery(apiBase, selectedRoleFilter);
+
+  // Sync TanStack Query candidates into candidateList while preserving UI selections
+  useEffect(() => {
+    if (Array.isArray(queryCandidates) && queryCandidates.length > 0) {
+      setCandidateList((prev) => {
+        if (!prev || prev.length === 0) return queryCandidates;
+        const selectedSet = new Set(prev.filter((c) => c.selected).map((c) => c.id || c.canonical_url));
+        return queryCandidates.map((c) => ({
+          ...c,
+          selected: selectedSet.has(c.id || c.canonical_url),
+        }));
+      });
+    }
+  }, [queryCandidates]);
+
+  // Route URL hash maps for browser back / forward history support
+  const NAV_HASH_MAP = useMemo(
+    () => ({
+      overview: "#overview",
+      review: "#candidates",
+      candidates: "#candidates",
+      job_description: "#job-description",
+      criteria: "#criteria",
+      sourcing: "#sourcing",
+      pipeline: "#pipeline",
+      shortlist: "#shortlist",
+      reports: "#reports",
+      settings: "#settings",
+    }),
+    []
+  );
+
+  const HASH_NAV_MAP = useMemo(
+    () => ({
+      overview: "overview",
+      candidates: "review",
+      review: "review",
+      "job-description": "job_description",
+      criteria: "criteria",
+      sourcing: "sourcing",
+      pipeline: "pipeline",
+      shortlist: "shortlist",
+      reports: "reports",
+      settings: "settings",
+    }),
+    []
+  );
+
+  // Unified navigation function with full browser history pushState integration
+  const navigateTo = useCallback(
+    (navId, candidateObj = null, replace = false) => {
+      let hash = "";
+      if (navId === "candidate_profile" && candidateObj) {
+        hash = `#candidate=${encodeURIComponent(candidateObj.id || candidateObj.canonical_url || candidateObj.name)}`;
+      } else {
+        hash = NAV_HASH_MAP[navId] || `#${navId}`;
+      }
+
+      if (typeof window !== "undefined") {
+        const stateObj = { nav: navId, candidateId: candidateObj?.id || null };
+        if (replace) {
+          window.history.replaceState(stateObj, "", hash);
+        } else if (window.location.hash !== hash) {
+          window.history.pushState(stateObj, "", hash);
+        }
+      }
+
+      if (navId === "candidate_profile" && candidateObj) {
+        setActiveNav((curr) => {
+          if (curr !== "candidate_profile") {
+            setPreviousNav(curr);
+          }
+          return "candidate_profile";
+        });
+        setSelectedCandidate(candidateObj);
+        if (candidateObj.target_role || candidateObj.job_title) {
+          setEvalTargetRole(candidateObj.target_role || candidateObj.job_title);
+        }
+      } else {
+        setSelectedCandidate(null);
+        setActiveNav(navId);
+      }
+    },
+    [NAV_HASH_MAP]
+  );
+
+  const handleOpenCandidateProfile = useCallback(
+    (candidate) => {
+      if (candidate) {
+        navigateTo("candidate_profile", candidate);
+      } else {
+        navigateTo(previousNav || "overview");
+      }
+    },
+    [navigateTo, previousNav]
+  );
+
+  // Browser level Back and Forward button tracking (popstate event listener)
+  useEffect(() => {
+    const handlePopState = (event) => {
+      if (typeof window === "undefined") return;
+      const rawHash = window.location.hash.replace(/^#\/?/, "");
+
+      // Handle candidate profile hash
+      if (rawHash.startsWith("candidate=")) {
+        const rawId = decodeURIComponent(rawHash.replace("candidate=", ""));
+        const found = candidateList.find(
+          (c) => String(c.id) === rawId || c.canonical_url === rawId || c.name === rawId
+        );
+        if (found) {
+          setSelectedCandidate(found);
+          setActiveNav("candidate_profile");
+          return;
+        }
+      }
+
+      // Handle named tab hashes
+      const targetNav = HASH_NAV_MAP[rawHash] || event.state?.nav || "overview";
+      setSelectedCandidate(null);
+      setActiveNav(targetNav);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [candidateList, HASH_NAV_MAP]);
+
+  // Initial load hash synchronization
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const rawHash = window.location.hash.replace(/^#\/?/, "");
+    if (
+      !rawHash ||
+      rawHash.includes("sign-in") ||
+      rawHash.includes("sign-up") ||
+      rawHash.includes("sso-callback")
+    ) {
+      window.history.replaceState({ nav: "overview", candidateId: null }, "", "#overview");
+    } else if (rawHash.startsWith("candidate=")) {
+      const rawId = decodeURIComponent(rawHash.replace("candidate=", ""));
+      const found = candidateList.find(
+        (c) => String(c.id) === rawId || c.canonical_url === rawId || c.name === rawId
+      );
+      if (found) {
+        setSelectedCandidate(found);
+        setActiveNav("candidate_profile");
+      }
+    } else if (HASH_NAV_MAP[rawHash]) {
+      setActiveNav(HASH_NAV_MAP[rawHash]);
+    }
+  }, [candidateList, HASH_NAV_MAP]);
+
+  // Global Escape key listener: closes any active modal container or exits candidate profile
+  useEffect(() => {
+    const handleGlobalKeyDown = (e) => {
+      if (e.key === "Escape") {
+        if (outreachModalOpen) {
+          setOutreachModalOpen(false);
+          return;
+        }
+        if (isWizardOpen) {
+          setIsWizardOpen(false);
+          return;
+        }
+        if (isReportModalOpen) {
+          setIsReportModalOpen(false);
+          return;
+        }
+        if (isAuthModalOpen) {
+          setIsAuthModalOpen(false);
+          return;
+        }
+        if (activeNav === "candidate_profile") {
+          if (typeof window !== "undefined" && window.history.length > 1) {
+            window.history.back();
+          } else {
+            navigateTo(previousNav || "overview");
+          }
+          return;
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, [
+    outreachModalOpen,
+    isWizardOpen,
+    isReportModalOpen,
+    isAuthModalOpen,
+    activeNav,
+    previousNav,
+    navigateTo,
+  ]);
 
   const checkHealth = useCallback(async (targetBase) => {
     const url = targetBase || apiBase;
@@ -644,12 +1011,13 @@ export default function Home() {
             };
           });
           setCandidateList(loaded);
+          setCandidatesData(loaded);
         }
       }
     } catch {
       // gracefully ignore if offline
     }
-  }, [apiBase]);
+  }, [apiBase, setCandidatesData]);
 
   const fetchAvailableAccounts = useCallback(async (targetBase) => {
     const url = targetBase || apiBase;
@@ -675,6 +1043,32 @@ export default function Home() {
     const timer = setInterval(() => checkHealth(apiBase), 3500);
     return () => clearInterval(timer);
   }, [checkHealth, fetchSavedJobs, fetchStoredCandidates, fetchAvailableAccounts, apiBase]);
+
+  // Synchronize company profile changes with outreach state & active job requirements
+  useEffect(() => {
+    const handleProfileSync = (prof) => {
+      if (!prof) return;
+      if (prof.companyName) {
+        setOutreachCompanyName(prof.companyName);
+        setJobRequirements((prev) => ({
+          ...prev,
+          company: prev.company && prev.company !== "Acme Corp" ? prev.company : prof.companyName,
+        }));
+      }
+      if (prof.companyDetails) {
+        setOutreachCompanyDetails(prof.companyDetails);
+      }
+      if (prof.recruiterName) {
+        setOutreachRecruiterName(prof.recruiterName);
+      }
+    };
+
+    const initial = getCompanyProfile();
+    handleProfileSync(initial);
+
+    const unsubscribe = subscribeCompanyProfile(handleProfileSync);
+    return unsubscribe;
+  }, []);
 
   // Auth & Browser Helpers
   const handleOpenLoginBrowser = async () => {
@@ -1572,6 +1966,8 @@ export default function Home() {
       if (res.ok) {
         setCandidateList([]);
         setSelectedCandidate(null);
+        setCandidatesData([]);
+        invalidateCandidates();
         addTelemetryLog("All candidate records cleared from database.", "shield");
       }
     } catch (err) {
@@ -1785,6 +2181,167 @@ export default function Home() {
     setCandidateList((prev) => prev.map((c) => ({ ...c, selected: nextState })));
   };
 
+  // Handle Opening Outreach Composer
+  const handleOpenOutreach = async (candidatesToContact) => {
+    const list = Array.isArray(candidatesToContact) ? candidatesToContact : [candidatesToContact];
+    if (list.length === 0) return;
+
+    setOutreachCandidates(list);
+    setOutreachModalOpen(true);
+    setOutreachComplete(false);
+    setOutreachProgress(null);
+
+    const firstCand = list[0];
+    const role = firstCand.target_role || firstCand.job_title || jobRequirements.jobTitle || (savedJobs[0]?.job_title || "Senior Engineer");
+    setOutreachRoleTitle(role);
+
+    const currentComp = jobRequirements.company || (savedJobs[0]?.company || outreachCompanyName || "Acme Corp");
+    setOutreachCompanyName(currentComp);
+
+    setOutreachGenerating(true);
+    try {
+      const cleanName = firstCand.name?.split(/[•·]/)[0]?.replace(/\b(1st\+?|2nd\+?|3rd\+?|view profile|connect|message)\b/gi, '')?.trim() || firstCand.name || "Candidate";
+      const res = await fetch(`${apiBase}/api/outreach/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          candidate_name: cleanName,
+          canonical_url: firstCand.canonical_url,
+          headline: firstCand.headline,
+          skills: firstCand.skills || [],
+          current_company: firstCand.current_company,
+          target_role: role,
+          company_name: currentComp,
+          company_details: outreachCompanyDetails,
+          recruiter_name: outreachRecruiterName,
+          tone: outreachTone,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setOutreachSubject(data.subject || `Opportunity: ${role} at ${currentComp}`);
+        setOutreachMessageBody(data.message_body || "");
+        setOutreachConnectionNote(data.connection_note || "");
+      }
+    } catch (err) {
+      console.error("Error generating initial outreach draft:", err);
+    } finally {
+      setOutreachGenerating(false);
+    }
+  };
+
+  // Regenerate Outreach Draft
+  const handleRegenerateOutreachDraft = async () => {
+    if (outreachCandidates.length === 0) return;
+    const firstCand = outreachCandidates[0];
+    setOutreachGenerating(true);
+    try {
+      const cleanName = firstCand.name?.split(/[•·]/)[0]?.replace(/\b(1st\+?|2nd\+?|3rd\+?|view profile|connect|message)\b/gi, '')?.trim() || firstCand.name || "Candidate";
+      const res = await fetch(`${apiBase}/api/outreach/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          candidate_name: cleanName,
+          canonical_url: firstCand.canonical_url,
+          headline: firstCand.headline,
+          skills: firstCand.skills || [],
+          current_company: firstCand.current_company,
+          target_role: outreachRoleTitle,
+          company_name: outreachCompanyName,
+          company_details: outreachCompanyDetails,
+          recruiter_name: outreachRecruiterName,
+          tone: outreachTone,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setOutreachSubject(data.subject);
+        setOutreachMessageBody(data.message_body);
+        setOutreachConnectionNote(data.connection_note);
+      }
+    } catch (err) {
+      console.error("Error regenerating outreach draft:", err);
+    } finally {
+      setOutreachGenerating(false);
+    }
+  };
+
+  // Dispatch Automated Outreach via Headed Browser Agent
+  const handleSendOutreach = async () => {
+    if (outreachCandidates.length === 0 || !outreachMessageBody.trim()) return;
+
+    setOutreachSending(true);
+    setOutreachComplete(false);
+    setOutreachProgress({ message: "Launching Playwright autonomous outreach browser agent...", progress: 10, state: "initializing" });
+    addTelemetryLog(`Initiating autonomous outreach for ${outreachCandidates.length} candidate(s)...`, "terminal");
+
+    try {
+      const payload = {
+        candidates: outreachCandidates.map((c) => ({
+          candidate_id: c.id,
+          canonical_url: c.canonical_url,
+          candidate_name: c.name?.split(/[•·]/)[0]?.replace(/\b(1st\+?|2nd\+?|3rd\+?|view profile|connect|message)\b/gi, '')?.trim() || c.name || "Candidate",
+          message_body: outreachMessageBody,
+          connection_note: outreachConnectionNote,
+        })),
+        browser_channel: browserChannel || "chrome",
+        mode: searchMode === "simulation" ? "simulation" : "live",
+      };
+
+      const res = await fetch(`${apiBase}/api/outreach/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to dispatch outreach session");
+      }
+
+      const data = await res.json();
+      const sid = data.session_id;
+      setOutreachSessionId(sid);
+
+      // Poll session status
+      const pollTimer = setInterval(async () => {
+        try {
+          const pollRes = await fetch(`${apiBase}/api/outreach/session/${sid}`);
+          if (pollRes.ok) {
+            const pData = await pollRes.json();
+            setOutreachProgress(pData);
+            if (pData.message) {
+              addTelemetryLog(pData.message, "terminal");
+            }
+
+            if (pData.state === "completed" || pData.state === "failed" || pData.state === "auth_required") {
+              clearInterval(pollTimer);
+              setOutreachSending(false);
+              if (pData.state === "completed") {
+                setOutreachComplete(true);
+                // Mark contacted candidates as Sent in table
+                setCandidateList((prev) =>
+                  prev.map((c) =>
+                    outreachCandidates.some((oc) => oc.id === c.id || oc.canonical_url === c.canonical_url)
+                      ? { ...c, outreach_status: "Sent", outreach_method: "Direct Message" }
+                      : c
+                  )
+                );
+                addTelemetryLog(`🎉 Outreach completed successfully!`, "shield");
+              }
+            }
+          }
+        } catch (pollErr) {
+          console.error("Polling outreach error:", pollErr);
+        }
+      }, 1500);
+    } catch (err) {
+      console.error("Outreach send error:", err);
+      setOutreachSending(false);
+      setOutreachProgress({ state: "failed", message: `Outreach execution failed: ${err.message}` });
+      addTelemetryLog(`Outreach execution error: ${err.message}`, "file");
+    }
+  };
+
   // Filter & Search Candidates with Role Support
   const filteredCandidates = useMemo(() => {
     return candidateList.filter((c) => {
@@ -1850,6 +2407,43 @@ export default function Home() {
     addTelemetryLog("Exported candidate shortlist to CSV!", "file");
   };
 
+  // 1. Loading and Auth Handover Gate
+  // Keep GlobalHiringLoader active if:
+  // - Component has not mounted yet
+  // - Clerk is still initializing (!isLoaded)
+  // - Fresh sign-in transition animation is active (showAuthTransition)
+  // - User has an existing session hint (hasAuthSessionHint) but Clerk is still resolving (!isSignedIn)
+  const isAwaitingAuth =
+    !hasMounted ||
+    !isLoaded ||
+    showAuthTransition ||
+    (hasAuthSessionHint && !isSignedIn);
+
+  if (isAwaitingAuth) {
+    return (
+      <GlobalHiringLoader
+        minDisplayMs={1000}
+        customTitle={
+          isSignedIn
+            ? `Welcome, ${user?.firstName || user?.fullName || "Recruiter"}!`
+            : "Initializing Recruiter Workspace..."
+        }
+        customSubtitle={
+          isSignedIn
+            ? "Preparing candidate sourcing pipeline and AI talent radar..."
+            : "Calibrating role schemas, search plan matrices, and extraction rules"
+        }
+        customBadge={isSignedIn ? "Authenticated" : "Workspace Boot"}
+        forceActive={!isLoaded || showAuthTransition || (hasAuthSessionHint && !isSignedIn)}
+      />
+    );
+  }
+
+  // 2. Only show AuthLandingPage when Clerk has DEFINITIVELY finished loading AND user is not signed in
+  if (!isSignedIn) {
+    return <AuthLandingPage />;
+  }
+
   return (
     <div className={`min-h-screen ${isDarkMode ? "dark bg-[#080c16] text-[#f1f5f9]" : "bg-[#f5f7fb] text-slate-800"} flex overflow-hidden font-sans antialiased selection:bg-indigo-500 selection:text-white transition-colors duration-200`}>
       {/* -------------------- 1. LEFT SIDEBAR NAVIGATION -------------------- */}
@@ -1874,39 +2468,37 @@ export default function Home() {
           <nav className="p-3 space-y-1">
             {[
               { id: "overview", label: "Overview", icon: Layers },
+              { id: "review", label: "Candidates", icon: Users, count: candidateList.length },
               { id: "job_description", label: "Job Description", icon: FileText },
               { id: "criteria", label: "Criteria & Search Plan", icon: SlidersHorizontal },
               { id: "sourcing", label: "Sourcing", icon: Search },
-              { id: "review", label: "Candidate Review", icon: UserCheck },
               { id: "pipeline", label: "Interview Pipeline", icon: Calendar },
               { id: "shortlist", label: "Shortlist", icon: Star },
               { id: "reports", label: "Reports & Exports", icon: BarChart3 },
               { id: "settings", label: "Settings", icon: Settings },
             ].map((item) => {
               const Icon = item.icon;
-              const isActive = activeNav === item.id;
+              const isActive = activeNav === item.id || (item.id === "review" && activeNav === "candidate_profile");
               return (
                 <button
                   key={item.id}
                   onClick={() => {
-                    setActiveNav(item.id);
-                    if (item.id === "job_description" || item.id === "criteria") {
-                      setIsJdEditorOpen(true);
-                    }
-                    if (item.id === "sourcing") {
-                      handleOpenWizard(sourcing ? 3 : 1);
-                    }
-                    if (item.id === "reports") {
-                      handleOpenReportModal();
-                    }
+                    navigateTo(item.id);
                   }}
-                  className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all ${isActive
+                  className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${isActive
                       ? "bg-indigo-50 dark:bg-indigo-600/20 text-indigo-700 dark:text-indigo-400 shadow-sm"
                       : "text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-[#12182b]"
                     }`}
                 >
-                  <Icon className={`h-4 w-4 ${isActive ? "text-indigo-600 dark:text-indigo-400" : "text-slate-400"}`} />
-                  <span>{item.label}</span>
+                  <div className="flex items-center gap-3">
+                    <Icon className={`h-4 w-4 ${isActive ? "text-indigo-600 dark:text-indigo-400" : "text-slate-400"}`} />
+                    <span>{item.label}</span>
+                  </div>
+                  {item.count !== undefined && item.count > 0 && (
+                    <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full ${isActive ? "bg-indigo-600 text-white" : "bg-slate-100 dark:bg-[#162038] text-slate-500 dark:text-slate-400"}`}>
+                      {item.count}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -2012,43 +2604,6 @@ export default function Home() {
             </button>
           </div>
 
-          {/* Center: Glowing AI Search Bar */}
-          <div className="flex-1 max-w-xl mx-6">
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (aiSearchPrompt.trim()) {
-                  addTelemetryLog(`AI prompt received: "${aiSearchPrompt}"`, "search");
-                  setJobRequirements((prev) => ({
-                    ...prev,
-                    jobTitle: prev.jobTitle || aiSearchPrompt.trim(),
-                    additionalInstructions: aiSearchPrompt.trim(),
-                  }));
-                  setIsWizardOpen(true);
-                  setWizardStep(1);
-                }
-              }}
-              className="relative flex items-center"
-            >
-              <div className="h-7 w-7 rounded-lg bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-white absolute left-2.5 shadow-sm">
-                <Sparkles className="h-3.5 w-3.5" />
-              </div>
-              <input
-                type="text"
-                value={aiSearchPrompt}
-                onChange={(e) => setAiSearchPrompt(e.target.value)}
-                placeholder="Ask AI... (e.g. 'Find 10 senior React engineers in India with 5+ years')"
-                className="w-full bg-slate-50 dark:bg-[#10162a] border border-slate-200 dark:border-[#1d2744] text-xs rounded-full pl-11 pr-11 py-2.5 text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-xs"
-              />
-              <button
-                type="submit"
-                className="h-7 w-7 rounded-full bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 flex items-center justify-center absolute right-2 transition-colors"
-              >
-                <ArrowRight className="h-3.5 w-3.5" />
-              </button>
-            </form>
-          </div>
-
           {/* Right: Status Pill, Notification, Theme Toggle, Profile */}
           <div className="flex items-center gap-3">
             {/* Status Pill matching Image 1 */}
@@ -2089,29 +2644,20 @@ export default function Home() {
               {isDarkMode ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4 text-slate-600" />}
             </button>
 
-            {/* User Profile avatar */}
-            <div className="flex items-center gap-2.5 pl-2 border-l border-slate-200 dark:border-[#141b2d]">
-              <div className="h-8 w-8 rounded-full bg-[#8b5cf6] flex items-center justify-center text-xs font-bold text-white shadow-sm">
-                HR
-              </div>
-              <div className="text-left hidden sm:flex items-center gap-1.5">
-                <div>
-                  <div className="text-xs font-bold text-slate-900 dark:text-slate-100 leading-tight">HR Team</div>
-                  <div className="text-[10px] text-slate-500 dark:text-slate-400">Recruiter</div>
-                </div>
-                <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
-              </div>
-            </div>
+            {/* User Profile & Clerk Auth / Dev Nav */}
+            <UserNav />
           </div>
         </header>
 
         {/* -------------------- MAIN PAGE BODY -------------------- */}
         <main className="p-7 space-y-6 max-w-[1650px] w-full mx-auto">
-          {/* Top Hero Banner: "Build Great Teams with AI" */}
+          {activeNav === "overview" && (
+            <>
+              {/* Top Hero Banner: "Build Great Teams with AI" */}
           <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-indigo-50/80 via-purple-50/60 to-pink-50/40 dark:from-[#11172a] dark:via-[#151c36] dark:to-[#1a1c38] border border-indigo-100/90 dark:border-[#222e50] p-7 sm:p-9 shadow-xs">
             {/* Background scenic mountain sunset silhouette with two summit hikers */}
             <div className="absolute right-0 top-0 bottom-0 w-full md:w-3/5 pointer-events-none opacity-45 dark:opacity-30 flex items-end justify-end overflow-hidden">
-              <svg viewBox="0 0 700 240" className="w-full h-full object-cover">
+              <svg viewBox="0 0 700 240" className="w-full h-full" preserveAspectRatio="xMaxYMid slice">
                 <defs>
                   <linearGradient id="sunsetSky" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="#fed7aa" stopOpacity="0.4" />
@@ -2192,12 +2738,21 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Right Column: Quote pill with accent underline */}
-              <div className="text-left md:text-right max-w-xs self-start md:self-auto">
-                <p className="text-xs italic text-slate-600 dark:text-slate-300 font-medium leading-relaxed">
+              {/* Right Column: Beautifully aligned talent mission quote card */}
+              <div className="max-w-sm self-start md:self-auto bg-white/75 dark:bg-[#0f172a]/75 backdrop-blur-md border border-white/90 dark:border-white/10 rounded-2xl p-4 shadow-sm space-y-2">
+                <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    Sourcing Philosophy
+                  </span>
+                </div>
+                <p className="text-xs italic text-slate-700 dark:text-slate-200 font-medium leading-relaxed">
                   “Find people who don't just fit the role, but move your mission forward.”
                 </p>
-                <div className="w-12 h-0.5 bg-indigo-600 dark:bg-indigo-400 md:ml-auto mt-2 rounded-full" />
+                <div className="flex items-center gap-2 pt-1.5 border-t border-slate-100 dark:border-[#1e293b] text-[10px] text-slate-400">
+                  <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
+                  <span>Local-first, evidence-grounded candidate matching</span>
+                </div>
               </div>
             </div>
           </div>
@@ -2282,84 +2837,92 @@ export default function Home() {
           </div>
 
           {/* Sourcing Pipeline Stepper Card */}
-          <div className="p-6 rounded-2xl bg-white dark:bg-[#0d1222] border border-slate-200/80 dark:border-[#172138] shadow-xs space-y-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <h3 className="text-sm font-black text-slate-900 dark:text-white tracking-tight">Sourcing Pipeline</h3>
+          <div className="p-5 sm:p-6 rounded-2xl bg-white dark:bg-[#0d1222] border border-slate-200/80 dark:border-[#172138] shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="h-8 w-8 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200/80 dark:border-indigo-800 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
+                  <Layers className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900 dark:text-white tracking-tight">Sourcing & Verification Pipeline</h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Autonomous multi-stage candidate harvesting & verification flow</p>
+                </div>
+              </div>
               <div className="flex items-center gap-3 text-xs">
-                <span className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
+                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-50 dark:bg-[#12182c] border border-slate-200 dark:border-[#1e2a4a] text-slate-600 dark:text-slate-300 font-medium text-[11px]">
                   <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                  Running · Started 2h 14m ago
+                  Live Headed Engine · Calibrated
                 </span>
                 <button
                   onClick={() => { setIsWizardOpen(true); setWizardStep(3); }}
-                  className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 font-bold flex items-center gap-1 transition-colors"
+                  className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 font-bold flex items-center gap-1 transition-colors cursor-pointer"
                 >
                   View Details <ArrowRight className="h-3 w-3" />
                 </button>
               </div>
             </div>
 
-            {/* 5-Step Numbered Stepper */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 pt-2">
+            {/* 5-Step Numbered Stepper with Connection Line */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 pt-2">
               {/* Step 1: JD Parsed */}
-              <div className="flex items-center gap-3">
-                <div className="h-8 w-8 rounded-full bg-amber-500 text-white font-bold flex items-center justify-center shrink-0 shadow-md shadow-amber-500/20 text-xs">
-                  1
+              <div className="p-3 rounded-xl bg-slate-50/80 dark:bg-[#12182c]/80 border border-slate-200/80 dark:border-[#1e2a4a] flex items-center gap-3">
+                <div className="h-8 w-8 rounded-full bg-emerald-500 text-white font-bold flex items-center justify-center shrink-0 shadow-md shadow-emerald-500/20 text-xs">
+                  <Check className="h-4 w-4 stroke-[3]" />
                 </div>
                 <div className="min-w-0">
-                  <h5 className="text-xs font-bold text-slate-900 dark:text-white truncate">JD Parsed</h5>
-                  <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">Completed 2m 18s</p>
+                  <h5 className="text-xs font-bold text-slate-900 dark:text-white truncate">1. JD Parsed</h5>
+                  <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">Completed · 2m 18s</p>
                 </div>
               </div>
 
               {/* Step 2: Search Plan Ready */}
-              <div className="flex items-center gap-3">
+              <div className="p-3 rounded-xl bg-slate-50/80 dark:bg-[#12182c]/80 border border-slate-200/80 dark:border-[#1e2a4a] flex items-center gap-3">
                 <div className="h-8 w-8 rounded-full bg-indigo-600 text-white font-bold flex items-center justify-center shrink-0 shadow-md shadow-indigo-600/20 text-xs">
-                  2
+                  <Check className="h-4 w-4 stroke-[3]" />
                 </div>
                 <div className="min-w-0">
-                  <h5 className="text-xs font-bold text-slate-900 dark:text-white truncate">Search Plan Ready</h5>
-                  <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-medium">Completed 4m 32s</p>
+                  <h5 className="text-xs font-bold text-slate-900 dark:text-white truncate">2. Search Plan Ready</h5>
+                  <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold">Completed · 4m 32s</p>
                 </div>
               </div>
 
               {/* Step 3: Collecting Profiles */}
-              <div className="flex items-center gap-3">
+              <div className="p-3 rounded-xl bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/60 flex items-center gap-3">
                 <div
                   className={`h-8 w-8 rounded-full ${sourcing
-                      ? "bg-indigo-600 text-white animate-pulse ring-4 ring-indigo-200"
-                      : "bg-indigo-600 text-white"
-                    } font-bold flex items-center justify-center shrink-0 shadow-md shadow-indigo-600/20 text-xs`}
+                      ? "bg-indigo-600 text-white ring-4 ring-indigo-200 dark:ring-indigo-800/40 animate-pulse"
+                      : "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
+                    } font-bold flex items-center justify-center shrink-0 text-xs`}
                 >
                   3
                 </div>
                 <div className="min-w-0">
-                  <h5 className="text-xs font-bold text-slate-900 dark:text-white truncate">Collecting Profiles</h5>
-                  <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-medium truncate">
-                    {sourcing ? "Actively Searching..." : "In progress 1,240 / 2,000"}
+                  <h5 className="text-xs font-bold text-slate-900 dark:text-white truncate">3. Collecting Profiles</h5>
+                  <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold truncate">
+                    {sourcing ? "Actively Searching..." : "In progress · 1,240 / 2,000"}
                   </p>
                 </div>
               </div>
 
               {/* Step 4: Evidence Review */}
-              <div className="flex items-center gap-3">
+              <div className="p-3 rounded-xl bg-slate-50/50 dark:bg-[#12182c]/50 border border-slate-200/60 dark:border-[#1e2a4a]/60 flex items-center gap-3">
                 <div className="h-8 w-8 rounded-full bg-slate-100 dark:bg-[#141b2e] border border-slate-200 dark:border-[#232e4d] text-slate-400 font-bold flex items-center justify-center shrink-0 text-xs">
                   4
                 </div>
                 <div className="min-w-0">
-                  <h5 className="text-xs font-bold text-slate-400 truncate">Evidence Review</h5>
-                  <p className="text-[10px] text-slate-400">Pending</p>
+                  <h5 className="text-xs font-bold text-slate-400 truncate">4. Evidence Review</h5>
+                  <p className="text-[10px] text-slate-400">Pending Evaluation</p>
                 </div>
               </div>
 
               {/* Step 5: Shortlist */}
-              <div className="flex items-center gap-3">
+              <div className="p-3 rounded-xl bg-slate-50/50 dark:bg-[#12182c]/50 border border-slate-200/60 dark:border-[#1e2a4a]/60 flex items-center gap-3">
                 <div className="h-8 w-8 rounded-full bg-slate-100 dark:bg-[#141b2e] border border-slate-200 dark:border-[#232e4d] text-slate-400 font-bold flex items-center justify-center shrink-0 text-xs">
                   5
                 </div>
                 <div className="min-w-0">
-                  <h5 className="text-xs font-bold text-slate-400 truncate">Shortlist</h5>
-                  <p className="text-[10px] text-slate-400">Pending</p>
+                  <h5 className="text-xs font-bold text-slate-400 truncate">5. Shortlist Ready</h5>
+                  <p className="text-[10px] text-slate-400">Pending Selection</p>
                 </div>
               </div>
             </div>
@@ -2370,138 +2933,217 @@ export default function Home() {
             {/* LEFT / CENTER: CANDIDATES TABLE (8 cols) */}
             <div className="xl:col-span-8 space-y-4 min-w-0">
               <div className="bg-white dark:bg-[#0d1222] border border-slate-200/80 dark:border-[#172138] rounded-2xl shadow-xs overflow-hidden">
-                {/* Table Header Controls */}
-                <div className="p-4 border-b border-slate-100 dark:border-[#151e36] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  {/* Filter Tabs */}
-                  <div className="flex items-center gap-1.5 overflow-x-auto">
-                    {[
-                      { id: "all", label: "Candidates", count: allCount },
-                      { id: "new", label: "New", count: newCount },
-                      { id: "in_review", label: "In Review", count: inReviewCount },
-                      { id: "shortlisted", label: "Shortlisted", count: shortlistedCount },
-                      { id: "not_a_fit", label: "Not a Fit", count: notAFitCount },
-                    ].map((tab) => (
-                      <button
-                        key={tab.id}
-                        onClick={() => setActiveTab(tab.id)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 ${activeTab === tab.id
-                            ? "bg-indigo-50 dark:bg-indigo-600 text-indigo-700 dark:text-white"
-                            : "text-slate-500 hover:text-slate-800 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-[#131b31]"
+                {/* 2-Tier Recruiter Control Header */}
+                <div className="p-4 border-b border-slate-100 dark:border-[#151e36] space-y-3">
+                  {/* Tier 1: Filter Tabs (Left) + Search & Role Select (Right) */}
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                    {/* Status Filter Tabs */}
+                    <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5">
+                      {[
+                        { id: "all", label: "All Candidates", count: allCount },
+                        { id: "new", label: "New", count: newCount },
+                        { id: "in_review", label: "In Review", count: inReviewCount },
+                        { id: "shortlisted", label: "Shortlisted", count: shortlistedCount },
+                        { id: "not_a_fit", label: "Not a Fit", count: notAFitCount },
+                      ].map((tab) => (
+                        <button
+                          key={tab.id}
+                          onClick={() => setActiveTab(tab.id)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 transition-all flex items-center gap-1.5 cursor-pointer ${
+                            activeTab === tab.id
+                              ? "bg-indigo-600 text-white shadow-xs"
+                              : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#131b31]"
                           }`}
-                      >
-                        <span>{tab.label}</span>
-                        <span
-                          className={`text-[10px] px-1.5 py-0.2 rounded-full ${activeTab === tab.id
-                              ? "bg-indigo-200/70 dark:bg-indigo-800 text-indigo-800 dark:text-indigo-200"
-                              : "bg-slate-100 dark:bg-[#16203a] text-slate-500"
-                            }`}
                         >
-                          {tab.count}
-                        </span>
-                      </button>
-                    ))}
+                          <span>{tab.label}</span>
+                          <span
+                            className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                              activeTab === tab.id
+                                ? "bg-indigo-700 text-indigo-100"
+                                : "bg-slate-200/70 dark:bg-[#1a2542] text-slate-600 dark:text-slate-400"
+                            }`}
+                          >
+                            {tab.count}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Role Filter & Candidate Search */}
+                    <div className="flex items-center gap-2.5 shrink-0">
+                      {/* Role Selector */}
+                      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-[#12182c] border border-slate-200 dark:border-[#202c4b]">
+                        <Briefcase className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                        <span className="text-[11px] font-bold text-slate-400">Role:</span>
+                        <select
+                          value={selectedRoleFilter}
+                          onChange={(e) => setSelectedRoleFilter(e.target.value)}
+                          className="bg-transparent text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none cursor-pointer"
+                        >
+                          <option value="All">All Roles ({candidateList.length})</option>
+                          {availableRoles.map((r) => (
+                            <option key={r.name} value={r.name}>
+                              {r.name} ({r.count})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Search Input */}
+                      <div className="relative">
+                        <Search className="h-3.5 w-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          type="text"
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          placeholder="Search candidates..."
+                          className="bg-slate-50 dark:bg-[#12182c] border border-slate-200 dark:border-[#202c4b] text-xs rounded-xl pl-9 pr-7 py-1.5 w-40 sm:w-52 text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-500 transition-colors"
+                        />
+                        {searchQuery && (
+                          <button
+                            onClick={() => setSearchQuery("")}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Role Selector & Search and Filters */}
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-100/80 dark:bg-[#12182c] border border-slate-200 dark:border-[#202c4b]">
-                      <Briefcase className="h-3 w-3 text-indigo-500" />
-                      <span className="text-[11px] font-bold text-slate-400">Role:</span>
-                      <select
-                        value={selectedRoleFilter}
-                        onChange={(e) => setSelectedRoleFilter(e.target.value)}
-                        className="bg-transparent text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none cursor-pointer"
-                      >
-                        <option value="All">All Roles ({candidateList.length})</option>
-                        {availableRoles.map((r) => (
-                          <option key={r.name} value={r.name}>
-                            {r.name} ({r.count})
-                          </option>
-                        ))}
-                      </select>
+                  {/* Tier 2: Recruiter Action Bar */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-[#151e36]">
+                    {/* Left: Selection summary or batch actions */}
+                    <div className="flex items-center gap-2">
+                      {candidateList.filter((c) => c.selected).length > 0 ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">
+                            {candidateList.filter((c) => c.selected).length} selected
+                          </span>
+                          <button
+                            onClick={() => handleOpenOutreach(candidateList.filter((c) => c.selected))}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+                          >
+                            <SendHorizontal className="h-3.5 w-3.5" />
+                            <span>✉️ Send Outreach ({candidateList.filter((c) => c.selected).length})</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              candidateList.filter((c) => c.selected).forEach((c) => handleUpdateStatus(c.id, "Shortlisted"));
+                            }}
+                            className="px-2.5 py-1.5 rounded-xl bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border border-amber-200 dark:border-amber-800 text-xs font-bold hover:bg-amber-100 transition-colors cursor-pointer"
+                          >
+                            ⭐ Shortlist Selected
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-medium">
+                          <span className="flex items-center gap-1.5 text-[11px]">
+                            <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                            Showing {filteredCandidates.length} candidate{filteredCandidates.length === 1 ? "" : "s"}
+                          </span>
+                          <span className="text-[11px] text-slate-400 dark:text-slate-500 hidden sm:inline-flex items-center gap-1 ml-1.5">
+                            💡 Mouse wheel scrolls left / right
+                          </span>
+                          {hasMounted && isCandidatesFetching && (
+                            <span className="flex items-center gap-1 text-[11px] text-indigo-500 font-semibold ml-2">
+                              <RefreshCw className="h-3 w-3 animate-spin" />
+                              Syncing DB...
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
 
-                    <div className="relative">
-                      <Search className="h-3.5 w-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                      <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Search candidates..."
-                        className="bg-slate-50 dark:bg-[#12182c] border border-slate-200 dark:border-[#202c4b] text-xs rounded-xl pl-9 pr-3 py-1.5 w-40 sm:w-48 text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-500"
-                      />
-                    </div>
-
-                    <button
-                      onClick={handleEvaluateAllCandidates}
-                      disabled={batchEvaluating || candidateList.length === 0}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-xs font-semibold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-colors disabled:opacity-50"
-                      title={selectedRoleFilter === "All" ? "Evaluate all candidates against their designated target roles" : `Evaluate all candidates for ${selectedRoleFilter}`}
-                    >
-                      <Sparkles className={`h-3 w-3 text-indigo-600 dark:text-indigo-400 ${batchEvaluating ? "animate-spin" : ""}`} />
-                      <span>
-                        {batchEvaluating
-                          ? "Evaluating..."
-                          : selectedRoleFilter === "All"
-                          ? "⚡ Evaluate All (By Role)"
-                          : `⚡ Evaluate ${selectedRoleFilter.length > 14 ? selectedRoleFilter.substring(0, 14) + '...' : selectedRoleFilter}`}
-                      </span>
-                    </button>
-
-                    <button
-                      onClick={handleSyncSupabase}
-                      disabled={syncingSupabase || candidateList.length === 0}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition-colors disabled:opacity-50"
-                      title="Sync local candidates and evaluations to Supabase PostgreSQL database"
-                    >
-                      <Cloud className={`h-3 w-3 text-emerald-600 dark:text-emerald-400 ${syncingSupabase ? "animate-bounce" : ""}`} />
-                      <span>{syncingSupabase ? "Syncing..." : "☁️ Sync Cloud"}</span>
-                    </button>
-
-                    <button
-                      onClick={() => handleOpenWizard(1)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-[#12182c] border border-slate-200 dark:border-[#202c4b] text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-slate-900 hover:border-slate-400 transition-colors"
-                    >
-                      <Filter className="h-3 w-3 text-slate-500" />
-                      <span>Configure Wizard</span>
-                    </button>
-
-                    {candidateList.length > 0 && (
+                    {/* Right: Operational Buttons */}
+                    <div className="flex items-center gap-2 flex-wrap">
                       <button
-                        onClick={handleClearAllCandidates}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/60 transition-colors cursor-pointer"
-                        title="Remove all candidates from database and shortlist"
+                        onClick={() => setActiveNav("review")}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-xs font-bold transition-all shadow-2xs cursor-pointer"
+                        title="Open full dedicated candidate section"
                       >
-                        <Trash2 className="h-3 w-3 text-rose-500" />
-                        <span>Clear All</span>
+                        <Users className="h-3.5 w-3.5 text-indigo-500" />
+                        <span>Dedicated Page</span>
+                        <ArrowRight className="h-3 w-3" />
                       </button>
-                    )}
+
+                      <button
+                        onClick={handleEvaluateAllCandidates}
+                        disabled={batchEvaluating || candidateList.length === 0}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-800 text-xs font-bold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-colors disabled:opacity-50 cursor-pointer shadow-2xs"
+                        title={selectedRoleFilter === "All" ? "Evaluate all candidates against their designated target roles" : `Evaluate all candidates for ${selectedRoleFilter}`}
+                      >
+                        <Sparkles className={`h-3 w-3 text-indigo-600 dark:text-indigo-400 ${batchEvaluating ? "animate-spin" : ""}`} />
+                        <span>
+                          {batchEvaluating
+                            ? "Evaluating..."
+                            : selectedRoleFilter === "All"
+                            ? "⚡ Evaluate All"
+                            : `⚡ Evaluate ${selectedRoleFilter.length > 12 ? selectedRoleFilter.substring(0, 12) + '...' : selectedRoleFilter}`}
+                        </span>
+                      </button>
+
+                      <button
+                        onClick={handleSyncSupabase}
+                        disabled={syncingSupabase || candidateList.length === 0}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition-colors disabled:opacity-50 cursor-pointer shadow-2xs"
+                        title="Sync local candidates and evaluations to Supabase PostgreSQL database"
+                      >
+                        <Cloud className={`h-3 w-3 text-emerald-600 dark:text-emerald-400 ${syncingSupabase ? "animate-bounce" : ""}`} />
+                        <span>{syncingSupabase ? "Syncing..." : "☁️ Sync Cloud"}</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleOpenWizard(1)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-[#12182c] border border-slate-200 dark:border-[#202c4b] text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-slate-900 hover:border-slate-400 transition-colors cursor-pointer"
+                        title="Launch 3-step candidate sourcing wizard"
+                      >
+                        <Filter className="h-3 w-3 text-slate-500" />
+                        <span>Wizard</span>
+                      </button>
+
+                      {candidateList.length > 0 && (
+                        <button
+                          onClick={handleClearAllCandidates}
+                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/60 transition-colors cursor-pointer"
+                          title="Remove all candidates from database and shortlist"
+                        >
+                          <Trash2 className="h-3 w-3 text-rose-500" />
+                          <span>Clear All</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
 
                 {/* Table Data */}
-                <div className="overflow-x-auto w-full">
-                  <table className="w-full text-left border-collapse text-xs table-fixed min-w-[960px]">
+                <div ref={setCandidateTableRef} className="overflow-x-auto w-full">
+                  <table className="w-full text-left border-collapse text-xs table-fixed min-w-[1060px]">
                     <thead>
-                      <tr className="border-b border-slate-100 dark:border-[#162038] text-[11px] font-bold text-slate-500 dark:text-slate-400 bg-slate-50/50 dark:bg-[#0c1120]">
+                      <tr className="border-b border-slate-100 dark:border-[#162038] text-[11px] font-bold text-slate-500 dark:text-slate-400 bg-slate-50/70 dark:bg-[#0c1120]">
                         <th className="py-3 px-3 w-10 text-center">
-                          <button onClick={toggleSelectAll} className="text-slate-400 hover:text-slate-600">
+                          <button onClick={toggleSelectAll} className="text-slate-400 hover:text-slate-600 cursor-pointer">
                             {selectAll ? <CheckSquare className="h-3.5 w-3.5 text-indigo-600" /> : <Square className="h-3.5 w-3.5" />}
                           </button>
                         </th>
-                        <th className="py-3 px-4 w-[230px]">Candidate</th>
-                        <th className="py-3 px-4 w-[240px]">Current Title / Company</th>
-                        <th className="py-3 px-4 w-[160px]">Target Requisition</th>
-                        <th className="py-3 px-4 w-[130px]">Skills Match</th>
-                        <th className="py-3 px-4 w-[110px]">Evidence</th>
-                        <th className="py-3 px-3 w-[70px] text-center">Source</th>
-                        <th className="py-3 px-4 w-[90px] text-right">Actions</th>
+                        <th className="py-3 px-4 w-[280px]">Candidate</th>
+                        <th className="py-3 px-4 w-[250px]">Current Title & Company</th>
+                        <th className="py-3 px-4 w-[150px]">Target Requisition</th>
+                        <th className="py-3 px-4 w-[200px]">Skills & Match</th>
+                        <th className="py-3 px-4 w-[130px]">Evidence & Sources</th>
+                        <th className="py-3 px-3 w-[105px]">Status</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-[#151d33]">
-                      {filteredCandidates.length === 0 ? (
+                      {isCandidatesLoading && candidateList.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="py-20 text-center">
+                          <td colSpan={7} className="py-8 px-4 text-center">
+                            <HiringRadarLoader role={selectedRoleFilter === "All" ? "Talent Repository" : selectedRoleFilter} />
+                          </td>
+                        </tr>
+                      ) : filteredCandidates.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="py-20 text-center">
                             <div className="max-w-md mx-auto space-y-3">
                               <div className="h-12 w-12 rounded-2xl bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mx-auto shadow-xs">
                                 <Users className="h-6 w-6" />
@@ -2513,7 +3155,7 @@ export default function Home() {
                               <div className="pt-2">
                                 <button
                                   onClick={() => handleOpenWizard(1)}
-                                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-xs font-bold shadow-md shadow-indigo-600/20 hover:shadow-lg transition-all"
+                                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-xs font-bold shadow-md shadow-indigo-600/20 hover:shadow-lg transition-all cursor-pointer"
                                 >
                                   <Sparkles className="h-3.5 w-3.5" />
                                   <span>Launch 3-Step Sourcing Wizard</span>
@@ -2527,7 +3169,7 @@ export default function Home() {
                           key={`${candidate.id || 'cand'}_${candidate.canonical_url || candidate.name}_${idx}`}
                           className="hover:bg-slate-50/80 dark:hover:bg-[#12192e]/60 transition-colors group cursor-pointer"
                           onClick={() => {
-                            setSelectedCandidate(candidate);
+                            handleOpenCandidateProfile(candidate);
                             setEvalTargetRole(candidate.target_role || candidate.job_title || jobRequirements.jobTitle || (savedJobs[0]?.job_title || "Senior AI Lead"));
                           }}
                         >
@@ -2539,196 +3181,227 @@ export default function Home() {
                               toggleSelectCandidate(candidate.id);
                             }}
                           >
-                            <button className="text-slate-400 hover:text-slate-600">
+                            <button className="text-slate-400 hover:text-indigo-600 cursor-pointer">
                               {candidate.selected ? (
-                                <CheckSquare className="h-3.5 w-3.5 text-indigo-600" />
+                                <CheckSquare className="h-4 w-4 text-indigo-600" />
                               ) : (
-                                <Square className="h-3.5 w-3.5" />
+                                <Square className="h-4 w-4" />
                               )}
                             </button>
                           </td>
 
                           {/* Candidate Avatar & Info */}
                           <td className="py-3.5 px-4 whitespace-nowrap">
-                            <div className="flex items-center gap-3">
-                              <img
-                                src={candidate.avatar || candidate.avatar_url || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80"}
-                                alt={candidate.name}
-                                onError={(e) => {
-                                  e.currentTarget.onerror = null;
-                                  e.currentTarget.src = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80";
-                                }}
-                                className="h-8 w-8 rounded-full object-cover border border-slate-200 dark:border-[#222e4d] shrink-0"
-                              />
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-1.5">
-                                  <div className="font-bold text-slate-900 dark:text-white text-xs group-hover:text-indigo-600 dark:group-hover:text-indigo-300 transition-colors truncate max-w-[170px]">
-                                    {candidate.name?.split(/[•·]/)[0]?.replace(/\b(1st\+?|2nd\+?|3rd\+?|view profile|connect|message)\b/gi, '')?.trim() || candidate.name}
-                                  </div>
-                                  {candidate.work_authorization && (
-                                    <span title={candidate.work_authorization} className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-md text-[9px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
-                                      <Award className="h-2.5 w-2.5 text-amber-600" /> {candidate.work_authorization.includes("Golden Visa") ? "Golden Visa" : candidate.work_authorization}
-                                    </span>
-                                  )}
+                            <div className="flex items-start gap-3">
+                              <div className="relative shrink-0 mt-0.5">
+                                <img
+                                  src={candidate.avatar || candidate.avatar_url || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80"}
+                                  alt={candidate.name}
+                                  onError={(e) => {
+                                    e.currentTarget.onerror = null;
+                                    e.currentTarget.src = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80";
+                                  }}
+                                  className="h-10 w-10 rounded-xl object-cover border border-slate-200 dark:border-[#222e4d] shadow-2xs"
+                                />
+                                {candidate.status === "Shortlisted" && (
+                                  <span className="absolute -top-1 -right-1 h-3.5 w-3.5 bg-amber-400 rounded-full flex items-center justify-center text-[8px] text-white shadow-xs">
+                                    ★
+                                  </span>
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="font-bold text-slate-900 dark:text-white text-xs group-hover:text-indigo-600 dark:group-hover:text-indigo-300 transition-colors">
+                                  {candidate.name?.split(/[•·]/)[0]?.replace(/\b(1st\+?|2nd\+?|3rd\+?|view profile|connect|message)\b/gi, '')?.trim() || candidate.name}
                                 </div>
-                                <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5 flex items-center gap-1">
-                                  <span>{candidate.location}</span>
+                                <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1 mt-0.5">
+                                  <MapPin className="h-3 w-3 text-slate-400 shrink-0" />
+                                  <span className="truncate">{candidate.location || "Location not specified"}</span>
                                   {candidate.location_compatibility_status === "Compatible" && (
-                                    <span className="text-[9px] font-semibold text-emerald-600 dark:text-emerald-400">• Compatible</span>
+                                    <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400 shrink-0">• Compatible</span>
                                   )}
                                 </div>
+                                {candidate.work_authorization && (
+                                  <div className="mt-1">
+                                    <span title={candidate.work_authorization} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                                      <Award className="h-2.5 w-2.5 text-amber-600 shrink-0" />
+                                      <span className="truncate max-w-[170px]">{candidate.work_authorization.includes("Golden Visa") ? "UAE Golden Visa" : candidate.work_authorization}</span>
+                                    </span>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </td>
 
-                          {/* Current Title / Company */}
+                          {/* Current Title & Company */}
                           <td className="py-3.5 px-4 whitespace-nowrap">
-                            <div className="flex items-center gap-1.5">
-                              <div className="font-bold text-slate-800 dark:text-slate-200 text-xs truncate max-w-[220px]" title={candidate.title}>
-                                {candidate.title}
+                            <div className="space-y-1">
+                              <div className="font-semibold text-slate-900 dark:text-white text-xs truncate max-w-[240px]" title={candidate.headline || candidate.title}>
+                                {candidate.title || candidate.headline || "Software Engineer"}
                               </div>
-                              {candidate.domain_relevance === "Highly Relevant" && (
-                                <span className="shrink-0 px-1.5 py-0.2 rounded-md text-[9px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                                  IT Core
+                              <div className="flex items-center gap-1.5">
+                                <Building2 className="h-3 w-3 text-slate-400 shrink-0" />
+                                <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-[140px]" title={candidate.company}>
+                                  {candidate.company && candidate.company !== "Current Organization" ? candidate.company : "Technology Professional"}
                                 </span>
-                              )}
-                              {candidate.domain_relevance === "Relevant" && (
-                                <span className="shrink-0 px-1.5 py-0.2 rounded-md text-[9px] font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-                                  Relevant
-                                </span>
-                              )}
-                              {candidate.domain_relevance === "Partially Relevant" && (
-                                <span className="shrink-0 px-1.5 py-0.2 rounded-md text-[9px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
-                                  Partial
-                                </span>
-                              )}
-                              {candidate.domain_relevance === "Not Relevant" && (
-                                <span title="Academic / Non-IT Domain" className="shrink-0 px-1.5 py-0.2 rounded-md text-[9px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
-                                  Non-IT
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-[220px]" title={candidate.company}>
-                              {candidate.company}
+                                {candidate.domain_relevance === "Highly Relevant" && (
+                                  <span className="shrink-0 px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                                    IT Core
+                                  </span>
+                                )}
+                                {candidate.domain_relevance === "Relevant" && (
+                                  <span className="shrink-0 px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                                    Relevant
+                                  </span>
+                                )}
+                                {candidate.domain_relevance === "Partially Relevant" && (
+                                  <span className="shrink-0 px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                                    Partial
+                                  </span>
+                                )}
+                                {candidate.domain_relevance === "Not Relevant" && (
+                                  <span title="Academic / Non-IT Domain" className="shrink-0 px-1.5 py-0.2 rounded text-[9px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+                                    Non-IT
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </td>
 
                           {/* Target Role Requisition */}
                           <td className="py-3.5 px-4 whitespace-nowrap">
                             <span
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-slate-100 text-slate-700 dark:bg-slate-800/80 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700/60 max-w-[150px] truncate"
-                              title={candidate.target_role || "General"}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-100 text-slate-700 dark:bg-[#162038] dark:text-slate-300 border border-slate-200/80 dark:border-[#223052] max-w-[150px] truncate"
+                              title={candidate.target_role || "General Requisition"}
                             >
-                              <Briefcase className="h-2.5 w-2.5 text-indigo-500 shrink-0" />
+                              <Briefcase className="h-3 w-3 text-indigo-500 shrink-0" />
                               <span className="truncate">{candidate.target_role || "General Requisition"}</span>
                             </span>
                           </td>
 
-                          {/* Skills Match */}
+                          {/* Skills & Match */}
                           <td className="py-3.5 px-4 whitespace-nowrap">
-                            {candidate.skill_match != null ? (
-                              <div className="flex items-center gap-2.5">
-                                <span className="font-extrabold text-slate-800 dark:text-slate-200 text-xs w-7">{candidate.skill_match}%</span>
-                                <div className="w-16 sm:w-20 bg-slate-100 dark:bg-[#16203a] h-1.5 rounded-full overflow-hidden shrink-0">
-                                  <div
-                                    className="h-full rounded-full bg-gradient-to-r from-teal-400 to-emerald-500"
-                                    style={{ width: `${candidate.skill_match}%` }}
-                                  />
+                            <div className="space-y-1.5">
+                              {candidate.skill_match != null ? (
+                                <div className="flex items-center gap-2">
+                                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold flex items-center gap-1 ${
+                                    candidate.skill_match >= 85
+                                      ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+                                      : candidate.skill_match >= 65
+                                      ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"
+                                      : "bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800"
+                                  }`}>
+                                    <Sparkles className="h-2.5 w-2.5" />
+                                    {candidate.skill_match}% Match
+                                  </span>
+                                  <div className="w-16 bg-slate-100 dark:bg-[#16203a] h-1.5 rounded-full overflow-hidden shrink-0">
+                                    <div
+                                      className="h-full rounded-full bg-gradient-to-r from-teal-400 to-indigo-600"
+                                      style={{ width: `${candidate.skill_match}%` }}
+                                    />
+                                  </div>
                                 </div>
-                              </div>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800/60">
-                                Pending Eval
-                              </span>
-                            )}
-                          </td>
-
-                          {/* Evidence Status Pill */}
-                          <td className="py-3.5 px-4 whitespace-nowrap">
-                            {candidate.evidence_status === "Verified" && (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
-                                <Check className="h-3 w-3 stroke-[3]" />
-                                Verified
-                              </span>
-                            )}
-                            {candidate.evidence_status === "Partial" && (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20">
-                                Partial
-                              </span>
-                            )}
-                            {candidate.evidence_status === "Not Verified" && (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500 dark:bg-slate-700/30 dark:text-slate-400 border border-slate-200 dark:border-slate-700/50">
-                                Not Verified
-                              </span>
-                            )}
-                            {(candidate.evidence_status === "Pending Review" || candidate.skill_match == null) && (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 border border-slate-200 dark:border-slate-700/50">
-                                <Clock className="h-3 w-3" />
-                                Pending Review
-                              </span>
-                            )}
-                          </td>
-
-                          {/* Sources */}
-                          <td className="py-3.5 px-3 text-center whitespace-nowrap">
-                            <div className="flex items-center justify-center gap-1 text-slate-400">
-                              <span className="h-6 w-6 rounded bg-blue-500 text-white flex items-center justify-center">
-                                <LinkedInIcon className="h-3 w-3" />
-                              </span>
-                              {candidate.sources.includes("github") && (
-                                <span className="h-6 w-6 rounded bg-slate-800 text-white flex items-center justify-center">
-                                  <GithubIcon className="h-3 w-3" />
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800/60">
+                                  Pending Eval
                                 </span>
                               )}
+
+                              {/* Top Skills Tags */}
+                              {(() => {
+                                const rawSkills = Array.isArray(candidate.skills)
+                                  ? candidate.skills
+                                  : (typeof candidate.skills === 'string' && candidate.skills.startsWith('[')
+                                      ? (() => { try { return JSON.parse(candidate.skills); } catch { return []; } })()
+                                      : []);
+                                const topSkills = rawSkills.slice(0, 3);
+                                if (topSkills.length === 0) return null;
+                                return (
+                                  <div className="flex items-center gap-1 flex-wrap">
+                                    {topSkills.map((sk, sIdx) => (
+                                      <span key={sIdx} className="px-1.5 py-0.2 rounded text-[9px] font-medium bg-slate-100 text-slate-600 dark:bg-[#151f38] dark:text-slate-300 border border-slate-200/60 dark:border-[#202c4b]">
+                                        {sk}
+                                      </span>
+                                    ))}
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          </td>
+
+                          {/* Evidence & Sources */}
+                          <td className="py-3.5 px-4 whitespace-nowrap">
+                            <div className="space-y-1.5">
+                              <div>
+                                {candidate.evidence_status === "Verified" && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
+                                    <CheckCircle2 className="h-3 w-3 stroke-[2.5]" />
+                                    Verified
+                                  </span>
+                                )}
+                                {candidate.evidence_status === "Partial" && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20">
+                                    <Clock className="h-3 w-3" />
+                                    Partial
+                                  </span>
+                                )}
+                                {candidate.evidence_status === "Not Verified" && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-500 dark:bg-slate-700/30 dark:text-slate-400 border border-slate-200 dark:border-slate-700/50">
+                                    Not Verified
+                                  </span>
+                                )}
+                                {(candidate.evidence_status === "Pending Review" || candidate.skill_match == null) && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 border border-slate-200 dark:border-slate-700/50">
+                                    <Clock className="h-3 w-3" />
+                                    Pending
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Source Icons */}
+                              <div className="flex items-center gap-1 text-slate-400">
+                                <span className="h-5 w-5 rounded bg-blue-500 text-white flex items-center justify-center shadow-2xs" title="LinkedIn Profile">
+                                  <LinkedInIcon className="h-2.5 w-2.5" />
+                                </span>
+                                {candidate.sources?.includes("github") && (
+                                  <span className="h-5 w-5 rounded bg-slate-800 text-white flex items-center justify-center shadow-2xs" title="GitHub Code Verified">
+                                    <GithubIcon className="h-2.5 w-2.5" />
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </td>
 
                           {/* Status */}
                           <td className="py-3.5 px-3 whitespace-nowrap">
-                            {candidate.status === "New" && (
-                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-sky-50 text-sky-700 dark:bg-blue-500/10 dark:text-blue-400 border border-sky-200 dark:border-blue-500/20">
-                                New
-                              </span>
-                            )}
-                            {candidate.status === "In Review" && (
-                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20">
-                                In Review
-                              </span>
-                            )}
-                            {candidate.status === "Shortlisted" && (
-                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
-                                Shortlisted
-                              </span>
-                            )}
-                            {candidate.status === "Not a Fit" && (
-                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400 border border-rose-200 dark:border-rose-500/20">
-                                Not a Fit
-                              </span>
-                            )}
-                          </td>
-
-                          {/* Actions */}
-                          <td className="py-3.5 px-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                            <div className="flex items-center justify-end gap-1.5">
-                              <button
-                                onClick={() => setSelectedCandidate(candidate)}
-                                className="px-3 py-1 rounded-lg bg-white dark:bg-[#141d33] border border-indigo-200 dark:border-indigo-500/50 hover:bg-indigo-50 text-indigo-700 dark:text-indigo-300 text-xs font-bold transition-colors shadow-xs"
-                              >
-                                Review
-                              </button>
-                              <button
-                                onClick={() => handleDeleteCandidate(candidate.id)}
-                                className="h-7 w-7 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 flex items-center justify-center transition-colors cursor-pointer"
-                                title="Delete candidate from shortlist and database"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                onClick={() => handleUpdateStatus(candidate.id, candidate.status === "Shortlisted" ? "New" : "Shortlisted")}
-                                className="h-7 w-7 rounded-lg text-slate-400 hover:text-slate-600 flex items-center justify-center"
-                              >
-                                <MoreVertical className="h-3.5 w-3.5" />
-                              </button>
+                            <div className="flex flex-col gap-1 items-start">
+                              {candidate.status === "New" && (
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-sky-50 text-sky-700 dark:bg-blue-500/10 dark:text-blue-400 border border-sky-200 dark:border-blue-500/20">
+                                  New
+                                </span>
+                              )}
+                              {candidate.status === "In Review" && (
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20">
+                                  In Review
+                                </span>
+                              )}
+                              {candidate.status === "Shortlisted" && (
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
+                                  Shortlisted
+                                </span>
+                              )}
+                              {candidate.status === "Not a Fit" && (
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400 border border-rose-200 dark:border-rose-500/20">
+                                  Not a Fit
+                                </span>
+                              )}
+                              {candidate.outreach_status === "Sent" && (
+                                <span
+                                  className="inline-flex items-center gap-1 px-2 py-0.2 rounded-full text-[9px] font-bold bg-teal-50 text-teal-700 dark:bg-teal-950/60 dark:text-teal-300 border border-teal-200 dark:border-teal-800"
+                                  title={`Outreach sent via ${candidate.outreach_method || 'LinkedIn'}`}
+                                >
+                                  <Mail className="h-2.5 w-2.5" /> Sent ✓
+                                </span>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -2744,64 +3417,89 @@ export default function Home() {
               {/* Top Panel: Job Description Summary */}
               <div className="p-5 rounded-2xl bg-white dark:bg-[#0d1222] border border-slate-200/80 dark:border-[#172138] shadow-xs space-y-3.5">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider">
-                    Job Description Summary
-                  </h3>
+                  <div className="flex items-center gap-2">
+                    <Briefcase className="h-3.5 w-3.5 text-indigo-500" />
+                    <h3 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider">
+                      Active Job Description
+                    </h3>
+                  </div>
                   <button
                     onClick={() => handleOpenWizard(1)}
-                    className="flex items-center gap-1 text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 font-bold transition-colors"
+                    className="flex items-center gap-1 text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 font-bold transition-colors cursor-pointer"
                   >
                     <Edit3 className="h-3 w-3" />
-                    <span>Edit</span>
+                    <span>Edit JD</span>
                   </button>
                 </div>
 
                 <div>
                   <div className="flex items-center gap-2 mb-2">
                     <h4 className="text-base font-black text-slate-900 dark:text-white">
-                      {jobRequirements.jobTitle || "No Target Role Configured"}
+                      {jobRequirements.jobTitle || "Senior AI Lead"}
                     </h4>
-                    {jobRequirements.jobTitle && (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
-                        Active
-                      </span>
-                    )}
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
+                      Active
+                    </span>
                   </div>
 
-                  {/* Metadata Chips */}
-                  <div className="flex flex-wrap gap-1.5 text-xs text-slate-600 dark:text-slate-300 mb-3.5">
-                    <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-[#131a2e] border border-slate-200/80 dark:border-[#1c2744] text-[11px]">
-                      <Briefcase className="h-3 w-3 text-slate-400" />
-                      {jobRequirements.department || "Engineering"}
-                    </span>
-                    <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-[#131a2e] border border-slate-200/80 dark:border-[#1c2744] text-[11px]">
-                      <Clock className="h-3 w-3 text-slate-400" />
-                      {jobRequirements.employmentType || "Full-time"}
-                    </span>
-                    <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-[#131a2e] border border-slate-200/80 dark:border-[#1c2744] text-[11px]">
-                      <Award className="h-3 w-3 text-slate-400" />
-                      {jobRequirements.minExperience}+ years
-                    </span>
-                    <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-[#131a2e] border border-slate-200/80 dark:border-[#1c2744] text-[11px]">
-                      <MapPin className="h-3 w-3 text-slate-400" />
-                      {jobRequirements.workMode || "Remote"}
-                    </span>
-                    {(jobRequirements.city || jobRequirements.country) && (
-                      <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-[#131a2e] border border-slate-200/80 dark:border-[#1c2744] text-[11px]">
-                        <Globe className="h-3 w-3 text-slate-400" />
-                        {[jobRequirements.city, jobRequirements.country].filter(Boolean).join(", ")}
-                      </span>
-                    )}
+                  {/* Metadata Chips 2-Column Grid */}
+                  <div className="grid grid-cols-2 gap-2 text-xs text-slate-600 dark:text-slate-300 mb-3.5">
+                    <div className="flex items-center gap-1.5 p-2 rounded-xl bg-slate-50 dark:bg-[#131a2e] border border-slate-200/80 dark:border-[#1c2744] text-[11px]">
+                      <Briefcase className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                      <div className="truncate">
+                        <span className="block text-[9px] text-slate-400 font-bold uppercase">Dept</span>
+                        <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">{jobRequirements.department || "AI Engineering"}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 p-2 rounded-xl bg-slate-50 dark:bg-[#131a2e] border border-slate-200/80 dark:border-[#1c2744] text-[11px]">
+                      <Clock className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                      <div className="truncate">
+                        <span className="block text-[9px] text-slate-400 font-bold uppercase">Type</span>
+                        <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">{jobRequirements.employmentType || "Full-time"}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 p-2 rounded-xl bg-slate-50 dark:bg-[#131a2e] border border-slate-200/80 dark:border-[#1c2744] text-[11px]">
+                      <Award className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                      <div className="truncate">
+                        <span className="block text-[9px] text-slate-400 font-bold uppercase">Exp Level</span>
+                        <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">{jobRequirements.minExperience || 8}+ Years</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 p-2 rounded-xl bg-slate-50 dark:bg-[#131a2e] border border-slate-200/80 dark:border-[#1c2744] text-[11px]">
+                      <MapPin className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                      <div className="truncate">
+                        <span className="block text-[9px] text-slate-400 font-bold uppercase">Location</span>
+                        <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">
+                          {[jobRequirements.city, jobRequirements.country].filter(Boolean).join(", ") || (jobRequirements.workMode || "Remote")}
+                        </span>
+                      </div>
+                    </div>
                   </div>
 
                   {/* Key Requirements Tags */}
                   <div>
-                    <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
-                      Key Requirements
-                    </h5>
+                    <div className="flex items-center justify-between mb-2">
+                      <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        Key Requirements ({jobRequirements.mandatorySkills?.length || 0})
+                      </h5>
+                      {jobRequirements.mandatorySkills && jobRequirements.mandatorySkills.length > 6 && (
+                        <button
+                          onClick={() => setShowAllJdSkills((prev) => !prev)}
+                          className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                        >
+                          {showAllJdSkills ? "Show Less" : `+${jobRequirements.mandatorySkills.length - 6} more`}
+                        </button>
+                      )}
+                    </div>
                     <div className="flex flex-wrap gap-1.5">
                       {jobRequirements.mandatorySkills && jobRequirements.mandatorySkills.length > 0 ? (
-                        jobRequirements.mandatorySkills.map((req, i) => (
+                        (showAllJdSkills
+                          ? jobRequirements.mandatorySkills
+                          : jobRequirements.mandatorySkills.slice(0, 6)
+                        ).map((req, i) => (
                           <span
                             key={i}
                             className="px-2.5 py-1 rounded-lg bg-slate-50 dark:bg-[#141c33] border border-slate-200 dark:border-[#1e2a4a] text-slate-700 dark:text-slate-300 text-[11px] font-semibold"
@@ -2822,26 +3520,54 @@ export default function Home() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <h3 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider">
-                      Agent Activity
+                      Agent Activity & Telemetry
                     </h3>
                     <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping" />
                       Live
                     </span>
                   </div>
-                  <button className="text-slate-400 hover:text-slate-600">
+                  <button className="text-slate-400 hover:text-slate-600 cursor-pointer">
                     <MoreVertical className="h-4 w-4" />
                   </button>
                 </div>
 
-                {/* Vertical Timeline Activity Items */}
-                <div className="space-y-3 relative before:absolute before:left-3 before:top-2 before:bottom-2 before:w-px before:bg-slate-200 dark:before:bg-[#192440]">
-                  {logs.length === 0 ? (
-                    <div className="py-6 text-center text-xs text-slate-400 italic">
-                      No activity recorded yet. Run a sourcing session to see live agent telemetry.
+                {/* Activity List or Telemetry Standby Status */}
+                {logs.length === 0 ? (
+                  <div className="space-y-2.5 py-1">
+                    <div className="p-3 rounded-xl bg-slate-50/80 dark:bg-[#12182c] border border-slate-200/80 dark:border-[#1e2a4a] space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                          <Terminal className="h-3.5 w-3.5 text-indigo-500" />
+                          Browser Traversal Engine
+                        </span>
+                        <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.2 rounded-full border border-emerald-200 dark:border-emerald-800">
+                          Ready
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
+                        Playwright headless browser initialized for human-cadence profile harvesting.
+                      </p>
                     </div>
-                  ) : (
-                    logs.slice(0, 6).map((log, i) => (
+
+                    <div className="p-3 rounded-xl bg-slate-50/80 dark:bg-[#12182c] border border-slate-200/80 dark:border-[#1e2a4a] space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                          <ShieldCheck className="h-3.5 w-3.5 text-indigo-500" />
+                          Evidence & Citations Scorer
+                        </span>
+                        <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 px-2 py-0.2 rounded-full border border-indigo-200 dark:border-indigo-800">
+                          Standby
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
+                        Multi-factor candidate fit evaluation grounded in verbatim profile evidence.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3 relative before:absolute before:left-3 before:top-2 before:bottom-2 before:w-px before:bg-slate-200 dark:before:bg-[#192440]">
+                    {logs.slice(0, 6).map((log, i) => (
                       <div key={i} className="flex items-start gap-2.5 relative pl-0.5">
                         <div className="h-5 w-5 rounded-full bg-indigo-50 dark:bg-[#141c33] border border-indigo-200 dark:border-[#202c4b] flex items-center justify-center shrink-0 z-10 text-indigo-600 dark:text-indigo-400">
                           {log.icon === "search" ? (
@@ -2859,19 +3585,177 @@ export default function Home() {
                           <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-snug break-words font-medium">{log.text}</p>
                         </div>
                       </div>
-                    ))
-                  )}
-                </div>
+                    ))}
+                  </div>
+                )}
 
                 <button
                   onClick={() => { setIsWizardOpen(true); setWizardStep(3); }}
-                  className="w-full text-center py-2 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 transition-colors flex items-center justify-center gap-1 pt-2 border-t border-slate-100 dark:border-[#151f38]"
+                  className="w-full text-center py-2 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 transition-colors flex items-center justify-center gap-1 pt-2 border-t border-slate-100 dark:border-[#151f38] cursor-pointer"
                 >
                   Open Live Sourcing View <ArrowRight className="h-3 w-3" />
                 </button>
               </div>
             </div>
           </div>
+            </>
+          )}
+
+          {activeNav === "job_description" && (
+            <JobDescriptionView
+              jobRequirements={jobRequirements}
+              setJobRequirements={setJobRequirements}
+              savedJobs={savedJobs}
+              handleSelectActiveRole={handleSelectActiveRole}
+              handleOpenWizard={handleOpenWizard}
+              handleSaveDraft={handleSaveDraft}
+              draftSavedToast={draftSavedToast}
+              handleDocumentUpload={handleDocumentUpload}
+              uploadingJd={uploadingJd}
+              uploadedFile={uploadedFile}
+            />
+          )}
+
+          {activeNav === "criteria" && (
+            <CriteriaView
+              jobRequirements={jobRequirements}
+              setJobRequirements={setJobRequirements}
+              strategicQueries={strategicQueries}
+              setStrategicQueries={setStrategicQueries}
+              selectedQueryId={selectedQueryId}
+              setSelectedQueryId={setSelectedQueryId}
+              handleRegenerateSingleQuery={handleRegenerateSingleQuery}
+              handleRegenerateAllQueries={handleRegenerateAllQueries}
+              generatingQueries={generatingQueries}
+              regeneratingQueryId={regeneratingQueryId}
+              handleOpenWizard={handleOpenWizard}
+            />
+          )}
+
+          {activeNav === "sourcing" && (
+            <SourcingView
+              sourcing={sourcing}
+              setSourcing={setSourcing}
+              searchMode={searchMode}
+              setSearchMode={setSearchMode}
+              browserChannel={browserChannel}
+              setBrowserChannel={setBrowserChannel}
+              maxResults={maxResults}
+              setMaxResults={setMaxResults}
+              availableAccounts={availableAccounts}
+              selectedAccountId={selectedAccountId}
+              setSelectedAccountId={setSelectedAccountId}
+              activeSessionId={activeSessionId}
+              sessionState={sessionState}
+              sessionProgress={sessionProgress}
+              sessionError={sessionError}
+              logs={logs}
+              handleLaunchSourcing={handleLaunchSourcing}
+              handleStopSourcing={handleStopSourcing}
+              handleVerifyAndContinue={handleVerifyAndContinue}
+              handleOpenLinkedInTab={handleOpenLinkedInTab}
+              handleOpenWizard={handleOpenWizard}
+            />
+          )}
+
+          {(activeNav === "review" || activeNav === "candidates") && (
+            <CandidateReviewView
+              candidateList={candidateList}
+              selectedCandidate={selectedCandidate}
+              setSelectedCandidate={handleOpenCandidateProfile}
+              handleEvaluateSingleCandidate={handleEvaluateSingleCandidate}
+              handleEvaluateAllCandidates={handleEvaluateAllCandidates}
+              evaluatingCandidateId={evaluatingCandidateId}
+              batchEvaluating={batchEvaluating}
+              handleUpdateStatus={handleUpdateStatus}
+              handleOpenOutreach={handleOpenOutreach}
+              handleDeleteCandidate={handleDeleteCandidate}
+              handleClearAllCandidates={handleClearAllCandidates}
+              handleSyncSupabase={handleSyncSupabase}
+              syncingSupabase={syncingSupabase}
+              handleOpenWizard={handleOpenWizard}
+              toggleSelectCandidate={toggleSelectCandidate}
+              toggleSelectAll={toggleSelectAll}
+              selectAll={selectAll}
+              availableRoles={availableRoles}
+              jobRequirements={jobRequirements}
+              savedJobs={savedJobs}
+              setEvalTargetRole={setEvalTargetRole}
+              setActiveNav={setActiveNav}
+            />
+          )}
+
+          {activeNav === "pipeline" && (
+            <InterviewPipelineView
+              candidateList={candidateList}
+              handleUpdateStatus={handleUpdateStatus}
+              setSelectedCandidate={handleOpenCandidateProfile}
+              handleOpenOutreach={handleOpenOutreach}
+            />
+          )}
+
+          {activeNav === "shortlist" && (
+            <ShortlistView
+              candidateList={candidateList}
+              handleUpdateStatus={handleUpdateStatus}
+              setSelectedCandidate={handleOpenCandidateProfile}
+              handleOpenOutreach={handleOpenOutreach}
+              exportToCSV={exportToCSV}
+              setActiveNav={setActiveNav}
+            />
+          )}
+
+          {activeNav === "reports" && (
+            <ReportsView
+              candidateList={candidateList}
+              handleOpenReportModal={handleOpenReportModal}
+              exportToCSV={exportToCSV}
+              logs={logs}
+            />
+          )}
+
+          {activeNav === "settings" && (
+            <SettingsView
+              jobRequirements={jobRequirements}
+            />
+          )}
+
+          {activeNav === "candidate_profile" && selectedCandidate && (
+            <CandidateProfileView
+              candidate={selectedCandidate}
+              candidateList={candidateList}
+              onSelectCandidate={(cand) => navigateTo("candidate_profile", cand)}
+              onBack={() => {
+                if (typeof window !== "undefined" && window.history.length > 1) {
+                  window.history.back();
+                } else {
+                  navigateTo(previousNav || "overview");
+                }
+              }}
+              previousNavLabel={
+                previousNav === "review" || previousNav === "candidates"
+                  ? "Candidates Directory"
+                  : previousNav === "pipeline"
+                  ? "Interview Pipeline"
+                  : previousNav === "shortlist"
+                  ? "Shortlist"
+                  : "Overview"
+              }
+              savedJobs={savedJobs}
+              jobRequirements={jobRequirements}
+              evalTargetRole={evalTargetRole}
+              setEvalTargetRole={setEvalTargetRole}
+              evaluatingCandidateId={evaluatingCandidateId}
+              handleEvaluateSingleCandidate={handleEvaluateSingleCandidate}
+              handleUpdateStatus={handleUpdateStatus}
+              handleDeleteCandidate={(id) => {
+                handleDeleteCandidate(id);
+                setSelectedCandidate(null);
+                setActiveNav(previousNav || "overview");
+              }}
+              handleOpenOutreach={handleOpenOutreach}
+            />
+          )}
         </main>
       </div>
 
@@ -4157,834 +5041,302 @@ export default function Home() {
         </div>
       )}
 
-{/* -------------------- 7. MODAL: CANDIDATE EVIDENCE REVIEW -------------------- */}
-      {selectedCandidate && (
+{/* -------------------- 7.5 MODAL: AUTOMATED OUTREACH COMPOSER & AGENT -------------------- */}
+      {outreachModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
-          <div className="w-full max-w-3xl bg-white dark:bg-[#0d1222] border border-slate-200 dark:border-[#1f2b47] rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+          <div className="w-full max-w-4xl bg-white dark:bg-[#0d1222] border border-slate-200 dark:border-[#1f2b47] rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
             {/* Modal Header */}
-            <div className="p-5 border-b border-slate-100 dark:border-[#18233c] flex items-start justify-between gap-4">
-              <div className="flex items-start sm:items-center gap-3.5 min-w-0">
-                <img
-                  src={selectedCandidate.avatar || selectedCandidate.avatar_url || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80"}
-                  alt={selectedCleanName}
-                  onError={(e) => {
-                    e.currentTarget.onerror = null;
-                    e.currentTarget.src = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80";
-                  }}
-                  className="h-12 w-12 rounded-2xl object-cover border-2 border-indigo-500/40 shadow-md shrink-0 mt-0.5 sm:mt-0"
-                />
-                <div className="min-w-0 space-y-1">
-                  {/* Candidate Name & High-Level Fit Badges */}
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-base font-black text-slate-900 dark:text-white truncate">
-                      {selectedCleanName}
+            <div className="p-5 border-b border-slate-100 dark:border-[#18233c] flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
+                  <Mail className="h-5 w-5 fill-white/20" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-black text-slate-900 dark:text-white">
+                      Automated Candidate Outreach & Engagement
                     </h3>
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
-                      {selectedCandidate.match_level || "Medium"} Fit
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-500/20 dark:text-blue-300 border border-blue-200 dark:border-blue-500/30">
+                      Playwright Agent
                     </span>
-                    {/* Domain Relevance Header Pill */}
-                    {selectedCandidate.domain_relevance === "Highly Relevant" && (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
-                        🎯 Highly Relevant IT
-                      </span>
-                    )}
-                    {selectedCandidate.domain_relevance === "Relevant" && (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/20">
-                        💼 Relevant Tech
-                      </span>
-                    )}
-                    {selectedCandidate.domain_relevance === "Partially Relevant" && (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20">
-                        ⚠️ Partially Relevant
-                      </span>
-                    )}
-                    {selectedCandidate.domain_relevance === "Not Relevant" && (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400 border border-rose-200 dark:border-rose-500/20">
-                        🛑 Non-IT / Academic Domain
-                      </span>
-                    )}
-                    {selectedCandidate.target_role && (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30">
-                        <Briefcase className="h-3 w-3 text-indigo-500 shrink-0" />
-                        {selectedCandidate.target_role}
-                      </span>
-                    )}
                   </div>
-
-                  {/* Cleaned & Sanitized Headline (No LinkedIn connection/follower noise) */}
-                  {selectedCleanHeadline && (
-                    <p className="text-xs font-medium text-slate-700 dark:text-slate-200 leading-snug line-clamp-2">
-                      {selectedCleanHeadline}
-                    </p>
-                  )}
-
-                  {/* Metadata Badges Row: Current Company, Title-Cased Location, Work Authorization */}
-                  <div className="flex flex-wrap items-center gap-2 pt-0.5 text-[11px]">
-                    {selectedCandidateCompany && (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-indigo-50/70 text-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800/60 font-semibold shadow-2xs">
-                        <Building2 className="h-3 w-3 text-indigo-600 dark:text-indigo-400 shrink-0" />
-                        <span>{selectedCandidateCompany}</span>
-                      </span>
-                    )}
-                    {selectedFormattedLocation && (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-slate-100 text-slate-700 dark:bg-[#141d33] dark:text-slate-300 border border-slate-200/80 dark:border-[#223150] font-medium shadow-2xs">
-                        <MapPin className="h-3 w-3 text-slate-400 shrink-0" />
-                        <span>{selectedFormattedLocation}</span>
-                      </span>
-                    )}
-                    {selectedCandidate.work_authorization && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800 text-[10px] font-bold shadow-2xs">
-                        <Award className="h-2.5 w-2.5 text-amber-600 shrink-0" />
-                        <span>{selectedCandidate.work_authorization}</span>
-                      </span>
-                    )}
-                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Human-cadence automated LinkedIn messaging • Dual-channel delivery (Direct Message or Connect Note)
+                  </p>
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => setSelectedCandidate(null)}
-                className="h-8 w-8 rounded-lg bg-slate-100 dark:bg-[#141b2e] text-slate-500 hover:text-slate-800 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-[#1f2b47] flex items-center justify-center shrink-0 transition-colors cursor-pointer"
-                aria-label="Close modal"
+                onClick={() => setOutreachModalOpen(false)}
+                className="h-8 w-8 rounded-lg bg-slate-100 dark:bg-[#141b2e] text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center justify-center cursor-pointer transition-colors"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <div className="p-6 overflow-y-auto space-y-4">
-              {/* Requisition Target Role Selector for Evaluation */}
-              <div className="p-3.5 rounded-2xl bg-indigo-50/70 dark:bg-[#0f172a] border border-indigo-100 dark:border-[#1e293b] flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <Briefcase className="h-4 w-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Evaluating Against Requisition:</span>
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-6">
+              {/* Recipients Banner */}
+              <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-[#0c1120] border border-slate-200/80 dark:border-[#1a2540] space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    Target Recipient{outreachCandidates.length > 1 ? `s (${outreachCandidates.length})` : ""}:
+                  </span>
+                  <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold">
+                    Recipient profiles will be visited sequentially with safety pauses
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-2.5 max-h-36 overflow-y-auto">
+                  {outreachCandidates.map((cand, i) => (
+                    <div
+                      key={cand.id || i}
+                      className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-white dark:bg-[#11192e] border border-slate-200 dark:border-[#202d4d] shadow-2xs"
+                    >
+                      <img
+                        src={cand.avatar || cand.avatar_url || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80"}
+                        alt={cand.name}
+                        className="h-7 w-7 rounded-full object-cover border border-slate-200 dark:border-slate-700 shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-900 dark:text-white truncate max-w-[180px]">
+                          {cand.name?.split(/[•·]/)[0]?.replace(/\b(1st\+?|2nd\+?|3rd\+?|view profile|connect|message)\b/gi, '')?.trim() || cand.name}
+                        </div>
+                        <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-[180px]">
+                          {cand.title || cand.headline || "Candidate"}
+                        </div>
+                      </div>
+                      {cand.canonical_url && (
+                        <a
+                          href={cand.canonical_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-slate-400 hover:text-blue-600 ml-1"
+                          title="Open LinkedIn profile in new tab"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Outreach Parameters */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3.5">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                    Hiring Role Title
+                  </label>
+                  <input
+                    type="text"
+                    value={outreachRoleTitle}
+                    onChange={(e) => setOutreachRoleTitle(e.target.value)}
+                    placeholder="e.g. Senior AI Lead"
+                    className="w-full text-xs px-3 py-2 rounded-xl bg-slate-50 dark:bg-[#10172b] border border-slate-200 dark:border-[#1d2946] text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500 font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                    Company Name
+                  </label>
+                  <input
+                    type="text"
+                    value={outreachCompanyName}
+                    onChange={(e) => setOutreachCompanyName(e.target.value)}
+                    placeholder="e.g. Hiring Desk / TechCorp"
+                    className="w-full text-xs px-3 py-2 rounded-xl bg-slate-50 dark:bg-[#10172b] border border-slate-200 dark:border-[#1d2946] text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500 font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                    Recruiter Signature
+                  </label>
+                  <input
+                    type="text"
+                    value={outreachRecruiterName}
+                    onChange={(e) => setOutreachRecruiterName(e.target.value)}
+                    placeholder="e.g. HR Talent Acquisition"
+                    className="w-full text-xs px-3 py-2 rounded-xl bg-slate-50 dark:bg-[#10172b] border border-slate-200 dark:border-[#1d2946] text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500 font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                    Message Tone
+                  </label>
                   <select
-                    value={evalTargetRole || selectedCandidate.target_role || selectedCandidate.job_title || jobRequirements.jobTitle || (savedJobs[0]?.job_title || "Senior AI Lead")}
-                    onChange={(e) => setEvalTargetRole(e.target.value)}
-                    className="px-2.5 py-1 text-xs font-bold rounded-xl bg-white dark:bg-[#151d30] border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                    value={outreachTone}
+                    onChange={(e) => setOutreachTone(e.target.value)}
+                    className="w-full text-xs px-3 py-2 rounded-xl bg-slate-50 dark:bg-[#10172b] border border-slate-200 dark:border-[#1d2946] text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500 font-medium cursor-pointer"
                   >
-                    {savedJobs.map((j) => (
-                      <option key={j.id || j.job_title} value={j.job_title}>
-                        {j.job_title} ({j.location || "Remote"})
-                      </option>
-                    ))}
+                    <option value="formal">Formal & Professional</option>
+                    <option value="warm">Warm & Conversational</option>
+                    <option value="direct">Direct & Technical</option>
                   </select>
                 </div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                  <span className="text-slate-400">Last Evaluated Against:</span>
-                  <strong className="text-indigo-600 dark:text-indigo-400 font-bold">
-                    {selectedCandidate.job_title || selectedCandidate.target_role || "Pending Evaluation"}
-                  </strong>
+              </div>
+
+              {/* Company Details Field */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300">
+                    Company Value Proposition / Mission
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleRegenerateOutreachDraft}
+                    disabled={outreachGenerating}
+                    className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  >
+                    <Sparkles className={`h-3 w-3 ${outreachGenerating ? "animate-spin" : ""}`} />
+                    <span>{outreachGenerating ? "Regenerating..." : "Regenerate Draft with AI"}</span>
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  value={outreachCompanyDetails}
+                  onChange={(e) => setOutreachCompanyDetails(e.target.value)}
+                  placeholder="e.g. a high-growth tech organization delivering enterprise AI workflows"
+                  className="w-full text-xs px-3 py-2 rounded-xl bg-slate-50 dark:bg-[#10172b] border border-slate-200 dark:border-[#1d2946] text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              {/* Message Subject & Body */}
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Subject Line (for InMail & Direct Message)
+                  </label>
+                  <input
+                    type="text"
+                    value={outreachSubject}
+                    onChange={(e) => setOutreachSubject(e.target.value)}
+                    placeholder="e.g. Opportunity: Senior AI Lead at Acme Corp"
+                    className="w-full text-xs px-3.5 py-2 rounded-xl bg-white dark:bg-[#10172b] border border-slate-200 dark:border-[#1d2946] text-slate-900 dark:text-white font-semibold focus:outline-none focus:border-indigo-500 shadow-2xs"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                      <span>Formal Direct Message (Multi-paragraph)</span>
+                      <span className="text-[10px] text-slate-400 font-normal">
+                        (Used when direct messaging is available)
+                      </span>
+                    </label>
+                  </div>
+                  <textarea
+                    rows={8}
+                    value={outreachMessageBody}
+                    onChange={(e) => setOutreachMessageBody(e.target.value)}
+                    placeholder="Drafting personalized formal hiring outreach message..."
+                    className="w-full text-xs p-3.5 rounded-2xl bg-white dark:bg-[#10172b] border border-slate-200 dark:border-[#1d2946] text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500 leading-relaxed font-sans shadow-2xs"
+                  />
+                </div>
+
+                {/* Connection Request Note (<= 300 chars) */}
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-[#0d1428] border border-slate-200 dark:border-[#1e2a47] space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                      <UserCheck className="h-3.5 w-3.5 text-indigo-500" />
+                      <span>LinkedIn Connection Request Note (Fallback for 2nd/3rd Degree)</span>
+                    </label>
+                    <span
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                        outreachConnectionNote.length > 295
+                          ? "bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300"
+                          : outreachConnectionNote.length > 270
+                          ? "bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300"
+                          : "bg-slate-200/80 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                      }`}
+                    >
+                      {outreachConnectionNote.length} / 295 max chars
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                    LinkedIn limits connection request notes strictly to 300 characters. If the candidate's direct message button is locked by InMail credits, the browser agent automatically uses this note to connect.
+                  </p>
+                  <textarea
+                    rows={3}
+                    maxLength={295}
+                    value={outreachConnectionNote}
+                    onChange={(e) => setOutreachConnectionNote(e.target.value)}
+                    placeholder="Hi [Name], impressed by your background. We are hiring for [Role] at [Company]..."
+                    className="w-full text-xs p-3 rounded-xl bg-white dark:bg-[#10172b] border border-slate-200 dark:border-[#1d2946] text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500 shadow-2xs"
+                  />
                 </div>
               </div>
 
-              {/* STAGE 1: Discovery & Eligibility Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {/* 1A. Location Compatibility & Relocation Card */}
-                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-[#0a0f1d] border border-slate-200/80 dark:border-[#1a253e] space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                      <MapPin className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
-                      1. Preferred Location & Mobility
+              {/* Progress and Telemetry during Sending */}
+              {outreachSending && (
+                <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 space-y-2 animate-in fade-in">
+                  <div className="flex items-center justify-between text-xs font-bold text-blue-900 dark:text-blue-200">
+                    <span className="flex items-center gap-2">
+                      <RefreshCw className="h-4 w-4 animate-spin text-blue-600" />
+                      <span>Autonomous Browser Agent Delivering Messages...</span>
                     </span>
-                    {selectedCandidate.location_compatibility_status === "Compatible" && (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
-                        ✓ Compatible
-                      </span>
-                    )}
-                    {selectedCandidate.location_compatibility_status === "Needs Verification" && (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400 border border-sky-200 dark:border-sky-500/20">
-                        ℹ Needs Verification
-                      </span>
-                    )}
-                    {selectedCandidate.location_compatibility_status === "Incompatible" && (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400 border border-rose-200 dark:border-rose-500/20">
-                        ✕ Incompatible
-                      </span>
-                    )}
+                    <span>{outreachProgress?.progress || 20}%</span>
                   </div>
-                  <div className="text-[11px] space-y-1 text-slate-600 dark:text-slate-300">
-                    <div>
-                      <span className="text-slate-400">Current Residence: </span>
-                      <span className="font-semibold text-slate-800 dark:text-slate-200">{selectedFormattedLocation || "Not specified"}</span>
-                    </div>
-                    <div>
-                      <span className="text-slate-400">Preferred Work Location: </span>
-                      <span className="font-semibold text-slate-800 dark:text-slate-200">
-                        {[jobRequirements.city, jobRequirements.stateRegion, jobRequirements.country].filter(Boolean).join(", ") || jobRequirements.location || "Flexible / Remote"}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-slate-400">Willingness to Relocate: </span>
-                      <span className="font-semibold text-slate-800 dark:text-slate-200">
-                        {selectedCandidate.willingness_to_relocate === "Yes" ? "Yes (Confirmed)" :
-                         selectedCandidate.willingness_to_relocate === "Likely" ? "Likely (In-Region)" :
-                         selectedCandidate.willingness_to_relocate === "No" ? "No" : "Unknown (Evaluated on Merit)"}
-                      </span>
-                    </div>
-                    {selectedCandidate.work_authorization && (
-                      <div className="pt-0.5">
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 dark:text-amber-300">
-                          <Award className="h-3 w-3 text-amber-500" />
-                          Authorization: {selectedCandidate.work_authorization}
-                        </span>
-                      </div>
-                    )}
+                  <div className="w-full h-2 rounded-full bg-blue-200 dark:bg-blue-900 overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-blue-600 to-indigo-600 transition-all duration-300"
+                      style={{ width: `${outreachProgress?.progress || 20}%` }}
+                    />
                   </div>
-                  {selectedCandidate.location_compatibility_reason && (
-                    <p className="text-[10px] text-slate-500 dark:text-slate-400 italic pt-1 border-t border-slate-200/60 dark:border-[#162035]">
-                      “{selectedCandidate.location_compatibility_reason}”
+                  <p className="text-[11px] text-blue-700 dark:text-blue-300 font-mono">
+                    {outreachProgress?.message || "Navigating to candidate profile on LinkedIn..."}
+                  </p>
+                </div>
+              )}
+
+              {/* Completion Banner */}
+              {outreachComplete && (
+                <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 flex items-center gap-3 animate-in fade-in">
+                  <div className="h-9 w-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+                    <CheckCircle2 className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h5 className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                      Outreach Successfully Delivered!
+                    </h5>
+                    <p className="text-[11px] text-emerald-700 dark:text-emerald-300 mt-0.5">
+                      The Playwright autonomous browser agent completed delivery. Candidate status has been updated to Sent.
                     </p>
-                  )}
-                </div>
-
-                {/* 1B. Professional Domain & Industry Relevance Card */}
-                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-[#0a0f1d] border border-slate-200/80 dark:border-[#1a253e] space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                      <Briefcase className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
-                      2. Domain & Industry Relevance
-                    </span>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                      selectedCandidate.domain_relevance === "Highly Relevant" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border-emerald-200" :
-                      selectedCandidate.domain_relevance === "Relevant" ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400 border-indigo-200" :
-                      selectedCandidate.domain_relevance === "Partially Relevant" ? "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400 border-amber-200" :
-                      "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400 border-rose-200"
-                    }`}>
-                      {selectedCandidate.domain_relevance || "Relevant"}
-                    </span>
                   </div>
-                  <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
-                    {selectedCandidate.domain_relevance_notes || "Candidate professional background evaluated for IT sector alignment and transferable engineering skills."}
-                  </p>
-                  <p className="text-[10px] text-slate-400 dark:text-slate-500 pt-1 border-t border-slate-200/60 dark:border-[#162035]">
-                    {selectedCandidate.domain_relevance === "Not Relevant" || selectedCandidate.domain_relevance === "Partially Relevant" 
-                      ? "⚠️ Screens out pure teacher training / educational management from dominating IT engineering search."
-                      : "✓ Strong engineering background aligned with production software & AI requirements."}
-                  </p>
-                </div>
-              </div>
-
-              {/* Comprehensive Evidence-Based Executive Fit & Category Analysis */}
-              <div 
-                ref={scoreSectionRef}
-                className="p-4 rounded-2xl bg-slate-50 dark:bg-[#080d1a] border border-slate-200/80 dark:border-[#1a253e] space-y-3"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="h-4 w-4 text-emerald-500 shrink-0" />
-                    <div>
-                      <span className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider block">
-                        Executive Fit & Evidence-Based Category Analysis
-                      </span>
-                      <span className="text-[10px] text-slate-500 dark:text-slate-400 font-normal">
-                        Normalized composite scoring • Missing sections do not penalize candidate with 0%
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2.5">
-                    {/* Left/Right Horizontal Scroll Buttons */}
-                    <div className="flex items-center gap-1 bg-white dark:bg-[#11172a] border border-slate-200/80 dark:border-[#1e293b] rounded-lg p-0.5 shadow-2xs">
-                      <button
-                        type="button"
-                        onClick={() => scrollScoreCategories("left")}
-                        disabled={!canScrollCategoriesLeft}
-                        className={`p-1 rounded-md transition-all ${
-                          canScrollCategoriesLeft
-                            ? "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#1a233a] cursor-pointer"
-                            : "text-slate-300 dark:text-slate-600 cursor-not-allowed opacity-40"
-                        }`}
-                        title="Scroll Categories Left"
-                        aria-label="Scroll Categories Left"
-                      >
-                        <ChevronLeft className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => scrollScoreCategories("right")}
-                        disabled={!canScrollCategoriesRight}
-                        className={`p-1 rounded-md transition-all ${
-                          canScrollCategoriesRight
-                            ? "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#1a233a] cursor-pointer"
-                            : "text-slate-300 dark:text-slate-600 cursor-not-allowed opacity-40"
-                        }`}
-                        title="Scroll Categories Right"
-                        aria-label="Scroll Categories Right"
-                      >
-                        <ChevronRight className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-
-                    <div className="text-right pl-2 border-l border-slate-200 dark:border-[#1a233a]">
-                      <span className="text-base font-black text-emerald-600 dark:text-emerald-400 block leading-tight">
-                        {selectedCandidate.skill_match != null ? `${selectedCandidate.skill_match}% Fit` : "Pending Eval"}
-                      </span>
-                      <span className="text-[10px] font-mono text-slate-400">
-                        {selectedCandidate.evaluation_coverage !== undefined && selectedCandidate.evaluation_coverage !== null
-                          ? selectedCandidate.evaluation_coverage
-                          : (selectedCandidate.skill_match != null ? 85 : 0)}% Coverage
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Horizontally Scrollable Itemized Weighted Breakdown */}
-                <div 
-                  ref={scoreScrollRef}
-                  onScroll={updateScrollButtons}
-                  className="flex items-stretch gap-3 p-1.5 pb-2.5 overflow-x-auto border-t border-slate-200/60 dark:border-[#162035] scroll-smooth snap-x snap-proximity focus:outline-none scrollbar-thin scroll-pl-1.5 scroll-pr-1.5"
-                >
-                  {[
-                    { key: "experience", label: "💼 Experience", weight: 35 },
-                    { key: "skills", label: "⚡ Skills", weight: 25 },
-                    { key: "about", label: "👤 About", weight: 15 },
-                    { key: "education", label: "🎓 Education", weight: 10 },
-                    { key: "certifications", label: "📜 Certifications", weight: 5 },
-                    { key: "projects", label: "🚀 Projects", weight: 5 },
-                    { key: "activity", label: "📢 Activity", weight: 5 },
-                  ].map(({ key, label, weight }) => {
-                    const isUnevaluated = selectedCandidate.skill_match == null && (!selectedCandidate.category_evaluations || Object.keys(selectedCandidate.category_evaluations).length === 0);
-                    const catEval = selectedCandidate.category_evaluations?.[key];
-                    const isNotAvailable = catEval
-                      ? (catEval.evaluation_state === "not_available" || catEval.status === "Not Available" || catEval.score === null || catEval.score === undefined)
-                      : (key === "about" && (!selectedCandidate.about || selectedCandidate.about.trim().length === 0)) ||
-                        (key === "education" && (!selectedCandidate.education || selectedCandidate.education.length === 0)) ||
-                        (key === "certifications" && (!selectedCandidate.certifications || selectedCandidate.certifications.length === 0)) ||
-                        (key === "projects" && (!selectedCandidate.projects || selectedCandidate.projects.length === 0)) ||
-                        (key === "activity" && (!selectedCandidate.recent_activity || selectedCandidate.recent_activity.length === 0));
-
-                    const score = isUnevaluated
-                      ? null
-                      : (catEval?.score !== undefined && catEval?.score !== null
-                          ? Math.round(catEval.score)
-                          : isNotAvailable ? null : (selectedCandidate.section_scores?.[key] !== undefined && selectedCandidate.section_scores?.[key] !== null ? Math.round(selectedCandidate.section_scores[key]) : null));
-
-                    const rawStatus = isUnevaluated
-                      ? "Pending"
-                      : (catEval?.status || (isNotAvailable ? "Not Available" : (score !== null && score >= 70) ? "Matched" : (score !== null && score >= 40) ? "Partially Matched" : "Not Matched"));
-
-                    const badgeText = isUnevaluated
-                      ? "Pending"
-                      : (isNotAvailable || rawStatus === "Not Available")
-                      ? "N/A"
-                      : rawStatus === "Partially Matched"
-                      ? "Partial"
-                      : rawStatus === "Not Matched"
-                      ? "No Match"
-                      : "Matched";
-
-                    const badgeColor = isUnevaluated
-                      ? "bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
-                      : (isNotAvailable || rawStatus === "Not Available")
-                      ? "bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
-                      : rawStatus === "Matched"
-                      ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
-                      : rawStatus === "Partially Matched"
-                      ? "bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300"
-                      : "bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300";
-
-                    const explanationText = isUnevaluated
-                      ? "Awaiting AI evaluation"
-                      : (catEval?.explanation || (isNotAvailable ? "Not on public profile" : "Verified from profile records"));
-
-                    return (
-                      <div
-                        key={key}
-                        className={`min-w-[178px] w-[178px] shrink-0 snap-start p-3 rounded-xl border transition-all flex flex-col justify-between ${
-                          isUnevaluated
-                            ? "bg-slate-50 dark:bg-[#0c1220] border-dashed border-slate-200 dark:border-[#162035]"
-                            : isNotAvailable
-                            ? "bg-slate-100/60 dark:bg-[#0c1220] border-slate-200/50 dark:border-[#162035] opacity-80"
-                            : "bg-white dark:bg-[#101728] border-slate-200/80 dark:border-[#1c2742] shadow-xs"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-1 mb-1">
-                          <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase truncate" title={`${label} (${weight}%)`}>
-                            {label}
-                          </span>
-                          <span className="text-[9px] font-mono text-slate-400 font-semibold shrink-0">
-                            {weight}%
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between gap-1.5 my-1.5">
-                          <div className="text-base font-black text-slate-900 dark:text-white">
-                            {isUnevaluated ? (
-                              <span className="text-xs font-semibold text-slate-400 dark:text-slate-500">—</span>
-                            ) : score !== null ? (
-                              `${score}%`
-                            ) : (
-                              <span className="text-xs font-semibold text-slate-400 dark:text-slate-500">
-                                N/A <span className="text-[8.5px] font-normal font-mono">(No penalty)</span>
-                              </span>
-                            )}
-                          </div>
-                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md whitespace-nowrap shrink-0 ${badgeColor}`}>
-                            {badgeText}
-                          </span>
-                        </div>
-                        <div className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5 leading-snug" title={explanationText}>
-                          {explanationText}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-medium pt-1">
-                  {selectedCandidate.justification || "Candidate profile harvested and verified."}
-                </p>
-              </div>
-
-              {/* 1) About & Summary Section */}
-              {selectedCandidate.about ? (
-                <div className="p-4 rounded-2xl bg-white dark:bg-[#0d1527] border border-slate-200/80 dark:border-[#1a253e] shadow-2xs space-y-2">
-                  <div className="flex items-center gap-2">
-                    <FileText className="h-4 w-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
-                    <span className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider">
-                      1. Executive About & Professional Summary
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-normal whitespace-pre-line pl-6">
-                    {selectedCandidate.about}
-                  </p>
-                </div>
-              ) : (
-                <div className="p-3.5 rounded-xl bg-slate-50/60 dark:bg-[#0c1222] border border-dashed border-slate-200 dark:border-[#1a253e] flex items-center justify-between text-xs text-slate-400 dark:text-slate-500">
-                  <div className="flex items-center gap-2">
-                    <FileText className="h-4 w-4 text-slate-400" />
-                    <span className="font-semibold text-slate-600 dark:text-slate-400">1. Executive About</span>
-                  </div>
-                  <span className="text-[11px] italic bg-slate-100 dark:bg-[#141b2e] px-2 py-0.5 rounded-md border border-slate-200/50 dark:border-[#1c2742]">
-                    Not published on public profile • No penalty
-                  </span>
                 </div>
               )}
-
-              {/* 2) Career Experience History */}
-              {selectedCandidate.experience_history && selectedCandidate.experience_history.length > 0 ? (
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-2">
-                      <Briefcase className="h-4 w-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
-                      <span>2. Career Experience History</span>
-                    </h4>
-                    <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-[#141b2e] px-2 py-0.5 rounded-full border border-slate-200/60 dark:border-[#1c2742]">
-                      {selectedCandidate.experience_history.length} {selectedCandidate.experience_history.length === 1 ? "position" : "positions"}
-                    </span>
-                  </div>
-                  <div className="space-y-2">
-                    {selectedCandidate.experience_history.map((exp, i) => (
-                      <div key={i} className="p-3.5 rounded-xl bg-white dark:bg-[#0f172a] border border-slate-200/80 dark:border-[#1d2946] text-xs shadow-2xs space-y-1.5">
-                        <div className="flex items-start justify-between gap-2">
-                          <span className="font-bold text-slate-900 dark:text-white text-xs">
-                            {exp.role || exp.title || exp.job_title || "Position"}
-                          </span>
-                          {exp.dates && (
-                            <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono bg-slate-100 dark:bg-[#18223a] px-2.5 py-0.5 rounded-md border border-slate-200/60 dark:border-[#223150] shrink-0">
-                              {exp.dates}
-                            </span>
-                          )}
-                        </div>
-                        {exp.company && (
-                          <div className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
-                            <Building2 className="h-3 w-3 text-indigo-500 shrink-0" />
-                            <span>{exp.company}</span>
-                          </div>
-                        )}
-                        {exp.description && (
-                          <p className="text-slate-600 dark:text-slate-300 text-[11px] leading-relaxed whitespace-pre-line pt-0.5">
-                            {exp.description}
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="p-3.5 rounded-xl bg-slate-50/60 dark:bg-[#0c1222] border border-dashed border-slate-200 dark:border-[#1a253e] flex items-center justify-between text-xs text-slate-400 dark:text-slate-500">
-                  <div className="flex items-center gap-2">
-                    <Briefcase className="h-4 w-4 text-slate-400" />
-                    <span className="font-semibold text-slate-600 dark:text-slate-400">2. Career Experience</span>
-                  </div>
-                  <span className="text-[11px] italic bg-slate-100 dark:bg-[#141b2e] px-2 py-0.5 rounded-md border border-slate-200/50 dark:border-[#1c2742]">
-                    Verified from title & current role ({selectedCandidateCompany || "Current Organization"})
-                  </span>
-                </div>
-              )}
-
-              {/* 3) Education & Academic Background */}
-              {selectedCandidate.education && selectedCandidate.education.length > 0 ? (
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-2">
-                      <GraduationCap className="h-4 w-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
-                      <span>3. Academic Education Background</span>
-                    </h4>
-                    <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-[#141b2e] px-2 py-0.5 rounded-full border border-slate-200/60 dark:border-[#1c2742]">
-                      {selectedCandidate.education.length} {selectedCandidate.education.length === 1 ? "institution" : "institutions"}
-                    </span>
-                  </div>
-                  <div className="space-y-2">
-                    {selectedCandidate.education.map((edu, i) => (
-                      <div key={i} className="p-3.5 rounded-xl bg-white dark:bg-[#0f172a] border border-slate-200/80 dark:border-[#1d2946] text-xs shadow-2xs space-y-1">
-                        <div className="flex items-start justify-between gap-2">
-                          <span className="font-bold text-slate-900 dark:text-white text-xs">
-                            {edu.degree || edu.field_of_study || "Degree"}
-                          </span>
-                          {edu.dates && (
-                            <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono bg-slate-100 dark:bg-[#18223a] px-2.5 py-0.5 rounded-md border border-slate-200/60 dark:border-[#223150] shrink-0">
-                              {edu.dates}
-                            </span>
-                          )}
-                        </div>
-                        {edu.school && (
-                          <div className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
-                            <span>{edu.school}</span>
-                          </div>
-                        )}
-                        {edu.field_of_study && edu.degree && (
-                          <p className="text-slate-500 dark:text-slate-400 text-[11px] pt-0.5">{edu.field_of_study}</p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="p-3.5 rounded-xl bg-slate-50/60 dark:bg-[#0c1222] border border-dashed border-slate-200 dark:border-[#1a253e] flex items-center justify-between text-xs text-slate-400 dark:text-slate-500">
-                  <div className="flex items-center gap-2">
-                    <GraduationCap className="h-4 w-4 text-slate-400" />
-                    <span className="font-semibold text-slate-600 dark:text-slate-400">3. Academic Education</span>
-                  </div>
-                  <span className="text-[11px] italic bg-slate-100 dark:bg-[#141b2e] px-2 py-0.5 rounded-md border border-slate-200/50 dark:border-[#1c2742]">
-                    Not publicly listed on profile • No penalty
-                  </span>
-                </div>
-              )}
-
-              {/* 4) Licenses & Certifications */}
-              {selectedCandidate.certifications && selectedCandidate.certifications.length > 0 ? (
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-2">
-                      <Award className="h-4 w-4 text-amber-500 shrink-0" />
-                      <span>4. Licenses & Certifications</span>
-                    </h4>
-                    <span className="text-[10px] font-semibold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-full border border-amber-200/60 dark:border-amber-900/40">
-                      {selectedCandidate.certifications.length} {selectedCandidate.certifications.length === 1 ? "credential" : "credentials"}
-                    </span>
-                  </div>
-                  <div className="space-y-2">
-                    {selectedCandidate.certifications.map((cert, i) => (
-                      <div key={i} className="p-3.5 rounded-xl bg-white dark:bg-[#0f172a] border border-slate-200/80 dark:border-[#1d2946] text-xs shadow-2xs space-y-1.5">
-                        <div className="flex items-start justify-between gap-2">
-                          <span className="font-bold text-slate-900 dark:text-white text-xs">
-                            {cert.name || cert.title || "Certification"}
-                          </span>
-                          {cert.issue_date && (
-                            <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono bg-slate-100 dark:bg-[#18223a] px-2.5 py-0.5 rounded-md border border-slate-200/60 dark:border-[#223150] shrink-0">
-                              {cert.issue_date}
-                            </span>
-                          )}
-                        </div>
-                        {(cert.issuing_org || cert.issuer || cert.organization) && (
-                          <div className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
-                            <span>{cert.issuing_org || cert.issuer || cert.organization}</span>
-                          </div>
-                        )}
-                        {(cert.credential_id || cert.id) && (
-                          <div className="pt-0.5">
-                            <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-[#141b2e] px-2 py-0.5 rounded border border-slate-200/60 dark:border-[#1e2a44]">
-                              Credential ID: {cert.credential_id || cert.id}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="p-3.5 rounded-xl bg-slate-50/60 dark:bg-[#0c1222] border border-dashed border-slate-200 dark:border-[#1a253e] flex items-center justify-between text-xs text-slate-400 dark:text-slate-500">
-                  <div className="flex items-center gap-2">
-                    <Award className="h-4 w-4 text-slate-400" />
-                    <span className="font-semibold text-slate-600 dark:text-slate-400">4. Licenses & Certifications</span>
-                  </div>
-                  <span className="text-[11px] italic bg-slate-100 dark:bg-[#141b2e] px-2 py-0.5 rounded-md border border-slate-200/50 dark:border-[#1c2742]">
-                    No certifications publicly listed • No penalty
-                  </span>
-                </div>
-              )}
-
-              {/* 5) Featured Projects & Portfolio */}
-              {selectedCandidate.projects && selectedCandidate.projects.length > 0 ? (
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-2">
-                      <Layers className="h-4 w-4 text-blue-500 shrink-0" />
-                      <span>5. Featured Projects & Portfolio</span>
-                    </h4>
-                    <span className="text-[10px] font-semibold text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 px-2 py-0.5 rounded-full border border-blue-200/60 dark:border-blue-900/40">
-                      {selectedCandidate.projects.length} {selectedCandidate.projects.length === 1 ? "project" : "projects"}
-                    </span>
-                  </div>
-                  <div className="space-y-2">
-                    {selectedCandidate.projects.map((proj, i) => (
-                      <div key={i} className="p-3.5 rounded-xl bg-white dark:bg-[#0f172a] border border-slate-200/80 dark:border-[#1d2946] text-xs shadow-2xs space-y-1.5">
-                        <div className="flex items-start justify-between gap-2">
-                          <span className="font-bold text-slate-900 dark:text-white text-xs">
-                            {proj.title || "Project"}
-                          </span>
-                          <div className="flex items-center gap-2 shrink-0">
-                            {proj.dates && (
-                              <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono bg-slate-100 dark:bg-[#18223a] px-2.5 py-0.5 rounded-md border border-slate-200/60 dark:border-[#223150]">
-                                {proj.dates}
-                              </span>
-                            )}
-                            {proj.url && (
-                              <a
-                                href={proj.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 hover:underline flex items-center gap-1 bg-indigo-50/70 dark:bg-indigo-950/40 px-2 py-0.5 rounded border border-indigo-200/60 dark:border-indigo-800/60"
-                              >
-                                <span>Repo / Link</span>
-                                <ExternalLink className="h-3 w-3" />
-                              </a>
-                            )}
-                          </div>
-                        </div>
-                        {proj.description && (
-                          <p className="text-slate-600 dark:text-slate-300 text-[11px] leading-relaxed pt-0.5 whitespace-pre-line">
-                            {proj.description}
-                          </p>
-                        )}
-                        {proj.skills && (Array.isArray(proj.skills) ? proj.skills.length > 0 : Boolean(proj.skills)) && (
-                          <div className="flex flex-wrap gap-1 pt-1">
-                            {(Array.isArray(proj.skills) ? proj.skills : String(proj.skills).split(/[,•·|]/)).map((s, idx) => (
-                              <span
-                                key={idx}
-                                className="px-2 py-0.5 rounded-md bg-blue-50/80 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 border border-blue-200/60 dark:border-blue-900/40 text-[10px] font-medium"
-                              >
-                                {String(s).trim()}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="p-3.5 rounded-xl bg-slate-50/60 dark:bg-[#0c1222] border border-dashed border-slate-200 dark:border-[#1a253e] flex items-center justify-between text-xs text-slate-400 dark:text-slate-500">
-                  <div className="flex items-center gap-2">
-                    <Layers className="h-4 w-4 text-slate-400" />
-                    <span className="font-semibold text-slate-600 dark:text-slate-400">5. Featured Projects & Portfolio</span>
-                  </div>
-                  <span className="text-[11px] italic bg-slate-100 dark:bg-[#141b2e] px-2 py-0.5 rounded-md border border-slate-200/50 dark:border-[#1c2742]">
-                    No public projects or repositories listed • No penalty
-                  </span>
-                </div>
-              )}
-
-              {/* 6) Skills & Evidence Verification */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-2">
-                    <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                    <span>6. Skills & Evidence Verification</span>
-                  </h4>
-                  {selectedCandidate.skills && selectedCandidate.skills.length > 0 && (
-                    <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-200/60 dark:border-emerald-900/40">
-                      {selectedCandidate.skills.length} verified skills
-                    </span>
-                  )}
-                </div>
-
-                {/* Extracted Profile Skills */}
-                {selectedCandidate.skills && selectedCandidate.skills.length > 0 ? (
-                  <div className="p-3.5 rounded-xl bg-white dark:bg-[#0f172a] border border-slate-200/80 dark:border-[#1d2946] shadow-2xs space-y-2">
-                    <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Extracted Skills:</div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {selectedCandidate.skills.map((skill, i) => (
-                        <span
-                          key={i}
-                          className="px-2.5 py-1 rounded-lg bg-indigo-50/70 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800/60 text-[11px] font-medium shadow-2xs"
-                        >
-                          {skill}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="p-3 rounded-xl bg-slate-50/60 dark:bg-[#0c1222] border border-dashed border-slate-200 dark:border-[#1a253e] text-[11px] text-slate-400 italic">
-                    No standalone skill chips indexed on public profile (Technical skills evaluated from role title, responsibilities & domain keywords)
-                  </div>
-                )}
-
-                {/* Verified Evidence Citations */}
-                {selectedCandidate.evidence_quotes && selectedCandidate.evidence_quotes.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Verified Evidence Citations:</div>
-                    <div className="space-y-2">
-                      {selectedCandidate.evidence_quotes.map((item, i) => (
-                        <div key={i} className="p-3.5 rounded-xl bg-white dark:bg-[#0f172a] border border-slate-200/80 dark:border-[#1d2946] text-xs shadow-2xs space-y-1.5">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-bold text-indigo-700 dark:text-indigo-300 text-xs">{item.requirement}</span>
-                            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono font-semibold bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-md border border-emerald-200/60 dark:border-emerald-800/40 shrink-0">
-                              {Math.round(item.confidence * 100)}% Confidence
-                            </span>
-                          </div>
-                          <p className="text-slate-600 dark:text-slate-300 italic text-[11px] leading-relaxed bg-slate-50 dark:bg-[#0a0f1d] p-2.5 rounded-lg border border-slate-100 dark:border-[#162035]">
-                            “{item.quote}”
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Unverified Role Requirements */}
-                {selectedCandidate.missing_skills?.length > 0 && (
-                  <div className="p-3.5 rounded-xl bg-rose-50/40 dark:bg-[#1a0f14] border border-rose-200/60 dark:border-[#381622] space-y-2">
-                    <div className="text-[11px] font-semibold text-rose-700 dark:text-rose-400">Unverified Role Requirements:</div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {selectedCandidate.missing_skills.map((skill, i) => (
-                        <span
-                          key={i}
-                          className="px-2.5 py-0.5 rounded-lg bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300 border border-rose-200 dark:border-rose-500/20 text-xs font-semibold"
-                        >
-                          {skill}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* 7) Recent Activity & Engagement */}
-              {selectedCandidate.recent_activity && selectedCandidate.recent_activity.length > 0 ? (
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-2">
-                      <Clock className="h-4 w-4 text-emerald-500 shrink-0" />
-                      <span>7. Recent Activity & Public Engagement</span>
-                    </h4>
-                  </div>
-                  <div className="space-y-2">
-                    {selectedCandidate.recent_activity.map((act, i) => (
-                      <div key={i} className="p-3.5 rounded-xl bg-white dark:bg-[#0f172a] border border-slate-200/80 dark:border-[#1d2946] text-xs shadow-2xs space-y-1">
-                        <div className="flex items-center justify-between mb-0.5">
-                          <span className="font-semibold text-emerald-700 dark:text-emerald-400 text-[11px]">{act.engagement_type || "Post / Activity"}</span>
-                          {act.date && <span className="text-[10px] text-slate-400 font-mono">{act.date}</span>}
-                        </div>
-                        {act.post_snippet && <p className="text-slate-600 dark:text-slate-300 text-[11px] italic mt-0.5">“{act.post_snippet}”</p>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="p-3.5 rounded-xl bg-slate-50/60 dark:bg-[#0c1222] border border-dashed border-slate-200 dark:border-[#1a253e] flex items-center justify-between text-xs text-slate-400 dark:text-slate-500">
-                  <div className="flex items-center gap-2">
-                    <Clock className="h-4 w-4 text-slate-400" />
-                    <span className="font-semibold text-slate-600 dark:text-slate-400">7. Recent Activity & Engagement</span>
-                  </div>
-                  <span className="text-[11px] italic bg-slate-100 dark:bg-[#141b2e] px-2 py-0.5 rounded-md border border-slate-200/50 dark:border-[#1c2742]">
-                    No public posts or comments shared
-                  </span>
-                </div>
-              )}
-
-              <div className="pt-1">
-                <a
-                  href={selectedCandidate.canonical_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 hover:underline"
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                  <span>View Public Profile ({selectedCandidate.canonical_url})</span>
-                </a>
-              </div>
             </div>
 
-            {/* Modal Action Buttons Footer */}
-            <div className="p-4 border-t border-slate-200/80 dark:border-[#18233c] bg-slate-50/80 dark:bg-[#0a0f1d] flex flex-wrap items-center justify-between gap-3 shrink-0">
-              {/* Left: Secondary Triage Actions */}
-              <div className="flex items-center gap-2">
-                {/* Delete Candidate Button */}
-                <button
-                  type="button"
-                  onClick={() => handleDeleteCandidate(selectedCandidate.id)}
-                  className="h-9 w-9 rounded-xl flex items-center justify-center bg-white dark:bg-[#141b2e] border border-slate-200 dark:border-[#1d2740] text-slate-400 hover:text-rose-600 hover:bg-rose-50/80 dark:hover:bg-rose-950/30 hover:border-rose-200 dark:hover:border-rose-900/50 transition-colors shadow-2xs cursor-pointer"
-                  title="Remove candidate from database and shortlist"
-                  aria-label="Remove candidate"
-                >
-                  <Trash2 className="h-4 w-4 text-rose-500" />
-                </button>
-
-                {/* Mark Not a Fit Button */}
-                <button
-                  type="button"
-                  onClick={() => handleUpdateStatus(selectedCandidate.id, "Not a Fit")}
-                  className={`h-9 px-3.5 rounded-xl text-xs font-bold transition-all shadow-2xs flex items-center gap-1.5 cursor-pointer ${
-                    selectedCandidate.status === "Not a Fit"
-                      ? "bg-rose-600 text-white border border-rose-600"
-                      : "text-rose-700 dark:text-rose-400 bg-rose-50/80 hover:bg-rose-100 dark:bg-rose-950/30 dark:hover:bg-rose-900/40 border border-rose-200 dark:border-rose-900/50"
-                  }`}
-                  title="Mark candidate as Not a Fit"
-                >
-                  <X className="h-3.5 w-3.5" />
-                  <span>Mark Not a Fit</span>
-                </button>
-
-                {/* Mark In Review Button */}
-                <button
-                  type="button"
-                  onClick={() => handleUpdateStatus(selectedCandidate.id, "In Review")}
-                  className={`h-9 px-3.5 rounded-xl text-xs font-bold transition-all shadow-2xs flex items-center gap-1.5 cursor-pointer ${
-                    selectedCandidate.status === "In Review"
-                      ? "bg-amber-600 text-white border border-amber-600"
-                      : "text-amber-800 dark:text-amber-300 bg-amber-50/80 hover:bg-amber-100 dark:bg-amber-950/30 dark:hover:bg-amber-900/40 border border-amber-200 dark:border-amber-900/50"
-                  }`}
-                  title="Mark candidate as In Review"
-                >
-                  <Clock className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
-                  <span>Mark In Review</span>
-                </button>
+            {/* Modal Footer */}
+            <div className="p-5 border-t border-slate-100 dark:border-[#18233c] flex items-center justify-between bg-slate-50/50 dark:bg-[#0a0f1d]">
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse" />
+                <span>Target Browser: Google Chrome ({browserChannel})</span>
               </div>
-
-              {/* Right: Primary Actions */}
-              <div className="flex items-center gap-2.5">
-                {/* Re-evaluate Button with compact role indicator */}
+              <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => handleEvaluateSingleCandidate(selectedCandidate, evalTargetRole || selectedCandidate.target_role || jobRequirements.jobTitle)}
-                  disabled={evaluatingCandidateId === selectedCandidate.id}
-                  className="h-9 px-3.5 rounded-xl text-xs font-bold text-indigo-700 hover:text-indigo-800 dark:text-indigo-200 bg-indigo-50 hover:bg-indigo-100/80 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/50 border border-indigo-200 dark:border-indigo-800/80 transition-all flex items-center gap-1.5 disabled:opacity-50 shadow-2xs cursor-pointer"
-                  title={`Evaluate evidence against ${evalTargetRole || selectedCandidate.target_role || "target role"}`}
+                  onClick={() => setOutreachModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#151e36] transition-colors cursor-pointer"
                 >
-                  <Sparkles className={`h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400 ${evaluatingCandidateId === selectedCandidate.id ? "animate-spin" : ""}`} />
-                  <span>
-                    {evaluatingCandidateId === selectedCandidate.id
-                      ? "Evaluating..."
-                      : selectedCandidate.skill_match != null
-                      ? "Re-evaluate"
-                      : "Evaluate"}
-                  </span>
-                  {evalTargetRole || selectedCandidate.target_role ? (
-                    <span className="max-w-[110px] truncate text-[10px] font-medium text-indigo-500/90 dark:text-indigo-300/80 bg-white/70 dark:bg-black/20 px-1.5 py-0.5 rounded border border-indigo-100 dark:border-indigo-900/40">
-                      {evalTargetRole || selectedCandidate.target_role}
-                    </span>
-                  ) : null}
+                  {outreachComplete ? "Done" : "Cancel"}
                 </button>
-
-                {/* Shortlist Candidate CTA */}
                 <button
                   type="button"
-                  onClick={() => handleUpdateStatus(selectedCandidate.id, "Shortlisted")}
-                  className="h-9 px-5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-md shadow-emerald-600/20 hover:shadow-emerald-600/30 border border-emerald-500/30 transition-all flex items-center gap-1.5 cursor-pointer"
-                  title="Shortlist this candidate"
+                  onClick={handleSendOutreach}
+                  disabled={outreachSending || !outreachMessageBody.trim() || outreachGenerating}
+                  className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md shadow-blue-500/20 disabled:opacity-50 flex items-center gap-2 cursor-pointer"
                 >
-                  <CheckCircle2 className="h-4 w-4" />
-                  <span>{selectedCandidate.status === "Shortlisted" ? "Shortlisted ✓" : "Shortlist Candidate"}</span>
+                  {outreachSending ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      <span>Sending via Agent...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="h-3.5 w-3.5" />
+                      <span>🚀 Send via Browser Agent ({outreachCandidates.length})</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>
@@ -5113,8 +5465,8 @@ export default function Home() {
                         <div
                           key={idx}
                           onClick={() => {
-                            setSelectedCandidate(cand);
                             setIsReportModalOpen(false);
+                            handleOpenCandidateProfile(cand);
                           }}
                           className="p-3 rounded-xl bg-slate-50 dark:bg-[#0e1424] border border-slate-200/80 dark:border-[#19233c] hover:border-indigo-400 dark:hover:border-indigo-500/50 cursor-pointer transition-all flex items-center justify-between"
                         >

@@ -431,6 +431,116 @@ class SupabaseService:
             logger.error("Supabase get_jobs failed: %s", e)
             return []
 
+    # =========================================================================
+    # USER & COMPANY PERSISTENCE (CLERK AUTH & RECRUITER ONBOARDING)
+    # =========================================================================
+
+    def upsert_user(self, user_data: Dict[str, Any]) -> Optional[str]:
+        """Upserts a user record synced from Clerk signup/login to Supabase."""
+        client = self.get_client()
+        if not client:
+            return None
+
+        uid = user_data.get("id")
+        email = user_data.get("email")
+        if not uid or not email:
+            return None
+
+        payload = {
+            "id": str(uid),
+            "email": str(email).lower().strip(),
+            "full_name": user_data.get("full_name") or "",
+            "first_name": user_data.get("first_name") or "",
+            "last_name": user_data.get("last_name") or "",
+            "role": user_data.get("role") or "Recruiter",
+            "company_id": user_data.get("company_id"),
+            "avatar_url": user_data.get("avatar_url"),
+        }
+
+        try:
+            res = client.table("users").upsert(payload).execute()
+            if res.data and len(res.data) > 0:
+                saved_id = res.data[0].get("id")
+                logger.info("Saved user to Supabase: %s (%s)", payload["email"], saved_id)
+                return saved_id
+            return None
+        except Exception as e:
+            logger.warning("Supabase upsert_user warning: %s", e)
+            return None
+
+    def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves user profile from Supabase by user_id."""
+        client = self.get_client()
+        if not client or not user_id:
+            return None
+
+        try:
+            res = client.table("users").select("*, companies(*)").eq("id", user_id).limit(1).execute()
+            if res.data and len(res.data) > 0:
+                return res.data[0]
+            return None
+        except Exception as e:
+            logger.warning("Supabase get_user warning: %s", e)
+            return None
+
+    def upsert_company(self, company_data: Dict[str, Any]) -> Optional[str]:
+        """Upserts a company profile to Supabase."""
+        client = self.get_client()
+        if not client:
+            return None
+
+        cid = company_data.get("id")
+        name = company_data.get("name") or company_data.get("companyName")
+        if not cid or not name:
+            return None
+
+        payload = {
+            "id": str(cid),
+            "name": str(name).strip(),
+            "industry": company_data.get("industry") or "",
+            "website": company_data.get("website") or "",
+            "location": company_data.get("location") or "",
+            "employee_count": company_data.get("employee_count") or company_data.get("employeeCount") or "50-250",
+            "value_proposition": company_data.get("value_proposition") or company_data.get("companyDetails") or "",
+            "recruiter_name": company_data.get("recruiter_name") or company_data.get("recruiterName") or "",
+            "recruiter_signature": company_data.get("recruiter_signature") or company_data.get("recruiterSignature") or "",
+            "created_by_user_id": company_data.get("created_by_user_id") or company_data.get("user_id"),
+        }
+
+        try:
+            res = client.table("companies").upsert(payload).execute()
+            if res.data and len(res.data) > 0:
+                saved_id = res.data[0].get("id")
+                logger.info("Saved company to Supabase: %s (%s)", payload["name"], saved_id)
+                return saved_id
+            return None
+        except Exception as e:
+            logger.warning("Supabase upsert_company warning: %s", e)
+            return None
+
+    def get_company(self, company_id: Optional[str] = None, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Retrieves company profile from Supabase."""
+        client = self.get_client()
+        if not client:
+            return None
+
+        try:
+            if company_id:
+                res = client.table("companies").select("*").eq("id", company_id).limit(1).execute()
+                if res.data and len(res.data) > 0:
+                    return res.data[0]
+            if user_id:
+                res = client.table("companies").select("*").eq("created_by_user_id", user_id).limit(1).execute()
+                if res.data and len(res.data) > 0:
+                    return res.data[0]
+            res = client.table("companies").select("*").order("updated_at", desc=True).limit(1).execute()
+            if res.data and len(res.data) > 0:
+                return res.data[0]
+            return None
+        except Exception as e:
+            logger.warning("Supabase get_company warning: %s", e)
+            return None
+
 
 # Global singleton service
 supabase_service = SupabaseService()
